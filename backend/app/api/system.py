@@ -38,6 +38,8 @@ def health():
             "asset_generation",
             "model_downloader",
             "shot_output_preview",
+            "editable_plan_json",
+            "llm_prompt_refinement",
         ],
     }
 

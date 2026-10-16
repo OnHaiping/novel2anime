@@ -31,5 +31,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .preview-meta { display: flex; flex-direction: column; gap: 8px; color: #7f8799; font-size: 12px; word-break: break-all; }
 .preview-meta strong { color: #e8ebf2; font-size: 14px; }
 .preview-meta a { color: #a78bfa; margin-top: 8px; }
+.plan-editor > .section-title { margin-top: 0; }
+.plan-editor > .section-title p { margin: 6px 0 0; }
+.plan-editor > textarea { min-height: 560px; max-height: 75vh; font-family: Consolas, "SFMono-Regular", monospace; font-size: 12px; line-height: 1.55; tab-size: 2; }
+.plan-editor > .form-row { margin-top: 10px; }
 @media (max-width: 850px) { .form-row > * { flex: 1 1 180px; } }
 @media (max-width: 850px) { .shot-preview { grid-template-columns: 1fr; margin: -1px 0 8px; } .shot-actions { grid-column: 1 / -1; } }

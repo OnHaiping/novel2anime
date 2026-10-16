@@ -213,6 +213,16 @@ class PlanRequest(BaseModel):
     selection_ids: list[str] | None = None
 
 
+class PlanDraftUpdate(BaseModel):
+    draft: dict[str, Any]
+
+
+class PlanApplyRequest(BaseModel):
+    append_to_timeline: bool = False
+    target_shot_seconds: float = Field(default=2.0, ge=1.0, le=6.0)
+    max_shots: int = Field(default=300, ge=1, le=300)
+
+
 class RenderRequest(BaseModel):
     force: bool = False
 

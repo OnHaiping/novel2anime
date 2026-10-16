@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..models import Character, Project, ProjectStatus, Scene, Shot
-from .llm import LLMClient
+from .llm import LLMClient, PlannedChunk
 from .prompt_builder import build_prompts
 from .router import classify_action
 
@@ -64,9 +64,30 @@ async def create_plan(
     selections: list[tuple[str, str]] | None = None,
     append_to_timeline: bool = False,
 ) -> tuple[int, int, int]:
+    plan = await generate_plan(project, use_llm, max_shots, selections)
+    return apply_plan(
+        db,
+        project,
+        plan,
+        max_shots=max_shots,
+        target_shot_seconds=target_shot_seconds,
+        append_to_timeline=append_to_timeline,
+    )
+
+
+async def generate_plan(
+    project: Project,
+    use_llm: bool,
+    max_shots: int,
+    selections: list[tuple[str, str]] | None = None,
+) -> dict[str, Any]:
     client = LLMClient()
     selected = selections or []
-    if use_llm and client.configured:
+    if use_llm:
+        if not client.configured:
+            raise RuntimeError(
+                "已选择使用大模型，但 LLM_MODEL 未配置；系统不会静默降级为按句拆分"
+            )
         plan = {"characters": [], "scenes": []}
         known: dict[str, dict[str, Any]] = {
             character.name: {
@@ -99,6 +120,19 @@ async def create_plan(
             f"{title}\n{text}" for title, text in selected if text.strip()
         )
         plan = heuristic_plan(combined, max_shots=max_shots)
+    return PlannedChunk.model_validate(plan).model_dump()
+
+
+def apply_plan(
+    db: Session,
+    project: Project,
+    plan: dict[str, Any],
+    *,
+    max_shots: int,
+    target_shot_seconds: float = 2.0,
+    append_to_timeline: bool = False,
+) -> tuple[int, int, int]:
+    plan = PlannedChunk.model_validate(plan).model_dump()
 
     if not append_to_timeline:
         for shot in list(project.shots):
@@ -183,6 +217,10 @@ async def create_plan(
                 ],
                 scene=scene,
             )
+            if shot_data.get("positive_prompt"):
+                positive = f"{positive}, {shot_data['positive_prompt']}"
+            if shot_data.get("negative_prompt"):
+                negative = f"{negative}, {shot_data['negative_prompt']}"
             shot = Shot(
                 project_id=project.id,
                 scene_id=scene.id,

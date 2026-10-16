@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -18,6 +21,8 @@ from ..schemas import (
     NovelSelectionCreate,
     NovelSelectionPatch,
     NovelSelectionRead,
+    PlanApplyRequest,
+    PlanDraftUpdate,
     PlanRequest,
     ProjectCreate,
     ProjectRead,
@@ -25,10 +30,54 @@ from ..schemas import (
     ShotPatch,
     ShotRead,
 )
-from ..services.planner import create_plan
+from ..services.llm import LLMClient, PlannedChunk
+from ..services.planner import apply_plan, create_plan, generate_plan
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+def _draft_path(project_id: str) -> Path:
+    return (
+        get_settings().data_root / "projects" / project_id / "plans" / "plan_draft.json"
+    )
+
+
+def _save_draft(project_id: str, draft: dict) -> tuple[dict, Path]:
+    normalized = PlannedChunk.model_validate(draft).model_dump()
+    path = _draft_path(project_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return normalized, path
+
+
+def _load_draft(project_id: str) -> tuple[dict, Path]:
+    path = _draft_path(project_id)
+    if not path.is_file():
+        raise HTTPException(404, "尚未生成分镜 JSON 草案")
+    try:
+        draft = json.loads(path.read_text(encoding="utf-8"))
+        return PlannedChunk.model_validate(draft).model_dump(), path
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise HTTPException(409, f"已保存的分镜 JSON 无效：{exc}") from exc
+
+
+def _selected_records(
+    db: Session, project_id: str, selection_ids: list[str] | None
+) -> list[NovelSelection]:
+    query = select(NovelSelection).where(NovelSelection.project_id == project_id)
+    if selection_ids is not None:
+        if not selection_ids:
+            raise HTTPException(400, "至少选择一条已记录选段")
+        query = query.where(NovelSelection.id.in_(selection_ids))
+    else:
+        query = query.where(NovelSelection.selected.is_(True))
+    records = list(db.scalars(query.order_by(NovelSelection.sequence)).all())
+    if not records:
+        raise HTTPException(400, "请先在原文中划线并记录至少一个选段")
+    return records
 
 
 @router.get("", response_model=list[ProjectRead])
@@ -91,6 +140,9 @@ async def upload_novel(
     project.settings = {**(project.settings or {}), "novel_type": novel_type}
     for selection in list(project.selections):
         db.delete(selection)
+    draft_path = _draft_path(project.id)
+    if draft_path.is_file():
+        draft_path.unlink()
     db.commit()
     db.refresh(project)
     return project
@@ -105,30 +157,20 @@ async def plan_project(
         raise HTTPException(404, "项目不存在")
     if not project.novel_text.strip():
         raise HTTPException(400, "请先上传小说")
-    selection_query = select(NovelSelection).where(
-        NovelSelection.project_id == project_id
-    )
-    if payload.selection_ids is not None:
-        if not payload.selection_ids:
-            raise HTTPException(400, "至少选择一条已记录选段")
-        selection_query = selection_query.where(
-            NovelSelection.id.in_(payload.selection_ids)
-        )
-    else:
-        selection_query = selection_query.where(NovelSelection.selected.is_(True))
-    selections = db.scalars(selection_query.order_by(NovelSelection.sequence)).all()
-    if not selections:
-        raise HTTPException(400, "请先在原文中划线并记录至少一个选段")
+    selections = _selected_records(db, project_id, payload.selection_ids)
     selection_input = [(item.title, item.source_text) for item in selections]
-    characters, scenes, shots = await create_plan(
-        db,
-        project,
-        payload.use_llm,
-        payload.max_shots,
-        payload.target_shot_seconds,
-        selection_input,
-        payload.append_to_timeline,
-    )
+    try:
+        characters, scenes, shots = await create_plan(
+            db,
+            project,
+            payload.use_llm,
+            payload.max_shots,
+            payload.target_shot_seconds,
+            selection_input,
+            payload.append_to_timeline,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
     processed_at = datetime.now(timezone.utc)
     for selection in selections:
         selection.process_count += 1
@@ -140,6 +182,97 @@ async def plan_project(
         "shots": shots,
         "selections_used": len(selection_input),
     }
+
+
+@router.post("/{project_id}/plan-draft")
+async def generate_plan_draft(
+    project_id: str, payload: PlanRequest, db: Session = Depends(get_db)
+):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "项目不存在")
+    records = _selected_records(db, project_id, payload.selection_ids)
+    selection_input = [(item.title, item.source_text) for item in records]
+    try:
+        draft = await generate_plan(
+            project, payload.use_llm, payload.max_shots, selection_input
+        )
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"大模型生成分镜失败：{exc}") from exc
+    normalized, path = _save_draft(project_id, draft)
+    processed_at = datetime.now(timezone.utc)
+    for record in records:
+        record.process_count += 1
+        record.last_processed_at = processed_at
+    db.commit()
+    return {
+        "draft": normalized,
+        "path": str(path.relative_to(get_settings().data_root)).replace("\\", "/"),
+        "selections_used": len(records),
+    }
+
+
+@router.get("/{project_id}/plan-draft")
+def get_plan_draft(
+    project_id: str, download: bool = False, db: Session = Depends(get_db)
+):
+    if not db.get(Project, project_id):
+        raise HTTPException(404, "项目不存在")
+    draft, path = _load_draft(project_id)
+    if download:
+        return FileResponse(
+            path, media_type="application/json", filename=f"{project_id}-plan.json"
+        )
+    return {"draft": draft, "path": str(path)}
+
+
+@router.put("/{project_id}/plan-draft")
+def update_plan_draft(
+    project_id: str, payload: PlanDraftUpdate, db: Session = Depends(get_db)
+):
+    if not db.get(Project, project_id):
+        raise HTTPException(404, "项目不存在")
+    try:
+        draft, path = _save_draft(project_id, payload.draft)
+    except ValidationError as exc:
+        raise HTTPException(400, f"分镜 JSON 校验失败：{exc}") from exc
+    return {"draft": draft, "path": str(path)}
+
+
+@router.post("/{project_id}/plan-draft/prompts")
+async def generate_draft_prompts(project_id: str, db: Session = Depends(get_db)):
+    if not db.get(Project, project_id):
+        raise HTTPException(404, "项目不存在")
+    draft, _ = _load_draft(project_id)
+    try:
+        enhanced = await LLMClient().generate_prompts(draft)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"大模型生成镜头提示词失败：{exc}") from exc
+    normalized, path = _save_draft(project_id, enhanced)
+    return {"draft": normalized, "path": str(path)}
+
+
+@router.post("/{project_id}/plan-draft/apply")
+def apply_plan_draft(
+    project_id: str, payload: PlanApplyRequest, db: Session = Depends(get_db)
+):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "项目不存在")
+    draft, _ = _load_draft(project_id)
+    characters, scenes, shots = apply_plan(
+        db,
+        project,
+        draft,
+        max_shots=payload.max_shots,
+        target_shot_seconds=payload.target_shot_seconds,
+        append_to_timeline=payload.append_to_timeline,
+    )
+    return {"characters": characters, "scenes": scenes, "shots": shots}
 
 
 @router.get("/{project_id}/novel-content", response_model=NovelContentRead)

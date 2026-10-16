@@ -75,21 +75,38 @@ def test_manual_text_selection_and_append_timeline(tmp_path, monkeypatch):
         assert second_selection["source_text"] == second_text
 
         first = client.post(
-            f"/api/projects/{project['id']}/plan",
+            f"/api/projects/{project['id']}/plan-draft",
             json={"use_llm": False, "selection_ids": [first_selection["id"]]},
         )
         assert first.status_code == 200
+        draft = first.json()["draft"]
+        draft["scenes"][0]["shots"][0]["positive_prompt"] = "cinematic test prompt"
+        saved = client.put(
+            f"/api/projects/{project['id']}/plan-draft", json={"draft": draft}
+        )
+        assert saved.status_code == 200
+        applied = client.post(
+            f"/api/projects/{project['id']}/plan-draft/apply",
+            json={"append_to_timeline": False, "max_shots": 30},
+        )
+        assert applied.status_code == 200
+
         second = client.post(
-            f"/api/projects/{project['id']}/plan",
+            f"/api/projects/{project['id']}/plan-draft",
             json={
                 "use_llm": False,
-                "append_to_timeline": True,
                 "selection_ids": [second_selection["id"]],
             },
         )
         assert second.status_code == 200
+        appended = client.post(
+            f"/api/projects/{project['id']}/plan-draft/apply",
+            json={"append_to_timeline": True, "max_shots": 30},
+        )
+        assert appended.status_code == 200
         shots = client.get(f"/api/projects/{project['id']}/shots").json()
         assert [shot["code"] for shot in shots] == ["S0001", "S0002"]
+        assert "cinematic test prompt" in shots[0]["positive_prompt"]
         selections = client.get(f"/api/projects/{project['id']}/selections").json()
         assert [item["process_count"] for item in selections] == [1, 1]
         assert all(item["last_processed_at"] for item in selections)

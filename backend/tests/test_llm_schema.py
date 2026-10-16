@@ -1,3 +1,6 @@
+import asyncio
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -56,4 +59,60 @@ def test_llm_parser_accepts_json_code_fence():
             "scenes"
         ]
         == []
+    )
+
+
+def test_prompt_generation_uses_edited_plan(monkeypatch):
+    client = LLMClient()
+    monkeypatch.setattr(client.settings, "llm_model", "test-model")
+    captured_prompts: list[str] = []
+
+    async def fake_request(user_prompt: str, *, system_prompt: str) -> str:
+        captured_prompts.append(user_prompt)
+        return json.dumps(
+            {
+                "items": [
+                    {
+                        "scene_index": 0,
+                        "shot_index": 0,
+                        "positive_prompt": "anime screencap, backlit cultivator",
+                        "negative_prompt": "text, watermark, bad anatomy",
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    edited_plan = {
+        "characters": [],
+        "scenes": [
+            {
+                "title": "人工修改后的审判场景",
+                "location": "宗门大殿",
+                "time_of_day": "day",
+                "weather": "clear",
+                "summary": "师尊背光质问主角",
+                "source_text": "曾经的师尊背着光，高高在上地站在我身前。",
+                "shots": [
+                    {
+                        "shot_type": "low angle wide shot",
+                        "camera": "slow push in",
+                        "action": "师尊背光站立并俯视主角",
+                        "emotion": "oppressive",
+                        "dialogue": "可知罪？",
+                        "characters": ["师尊"],
+                        "location": "宗门大殿",
+                        "source_text": "曾经的师尊背着光，高高在上地站在我身前。",
+                    }
+                ],
+            }
+        ],
+    }
+
+    result = asyncio.run(client.generate_prompts(edited_plan))
+
+    assert "人工修改后的审判场景" in captured_prompts[0]
+    assert "low angle wide shot" in captured_prompts[0]
+    assert result["scenes"][0]["shots"][0]["positive_prompt"].startswith(
+        "anime screencap"
     )
