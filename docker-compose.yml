@@ -44,7 +44,7 @@ services:
       - ./workflows:/app/workflows:ro
       - /work/comfyui/main:/comfyui
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-3301}:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -78,7 +78,7 @@ services:
       context: ./frontend
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "${FRONTEND_PORT:-3300}:80"
     depends_on:
       - backend
 

@@ -16,5 +16,5 @@ lint:
 	docker compose run --rm backend ruff check app tests
 
 doctor:
-	curl -fsS http://localhost:8000/api/system/diagnostics | python -m json.tool
+	curl -fsS http://localhost:3301/api/system/diagnostics | python -m json.tool
 

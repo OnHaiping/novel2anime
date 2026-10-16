@@ -21,13 +21,13 @@
 ## 架构
 
 ```text
-Browser :3000
+Browser :3300
     │
     ▼
 React / Nginx
     │ /api
     ▼
-FastAPI :8000 ───── PostgreSQL
+FastAPI :3301（容器内 :8000） ───── PostgreSQL
     │                    │
     └──── Redis/Celery ──┘
               │
@@ -62,6 +62,9 @@ cp .env.example .env
 ```dotenv
 POSTGRES_PASSWORD=使用强密码
 SECRET_KEY=使用长随机字符串
+FRONTEND_PORT=3300
+BACKEND_PORT=3301
+APP_ORIGIN=http://服务器IP:3300
 ```
 
 如使用本地 Ollama/vLLM/OpenAI-compatible 服务：
@@ -120,10 +123,10 @@ docker compose logs -f --tail=200
 
 访问：
 
-- Web：<http://服务器地址:3000>
-- API 文档：<http://服务器地址:8000/docs>
-- 健康检查：<http://服务器地址:8000/api/system/health>
-- 系统诊断：<http://服务器地址:8000/api/system/diagnostics>
+- Web：<http://服务器地址:3300>
+- API 文档：<http://服务器地址:3301/docs>
+- 健康检查：<http://服务器地址:3301/api/system/health>
+- 系统诊断：<http://服务器地址:3301/api/system/diagnostics>
 
 ## 4. 必需模型
 

@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "Novel2Anime"
-    app_origin: str = "http://localhost:3000"
+    app_origin: str = "http://localhost:3300"
     secret_key: str = "development-only-change-me"
     database_url: str = "sqlite:///./data/novel2anime.db"
     redis_url: str = "redis://localhost:6379/0"
