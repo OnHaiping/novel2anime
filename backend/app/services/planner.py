@@ -64,8 +64,12 @@ async def create_plan(
     selections: list[tuple[str, str]] | None = None,
     append_to_timeline: bool = False,
     llm_model: str | None = None,
+    llm_base_url: str | None = None,
+    llm_api_key: str | None = None,
 ) -> tuple[int, int, int]:
-    plan = await generate_plan(project, use_llm, max_shots, selections, llm_model)
+    plan = await generate_plan(
+        project, use_llm, max_shots, selections, llm_model, llm_base_url, llm_api_key
+    )
     return apply_plan(
         db,
         project,
@@ -82,8 +86,10 @@ async def generate_plan(
     max_shots: int,
     selections: list[tuple[str, str]] | None = None,
     llm_model: str | None = None,
+    llm_base_url: str | None = None,
+    llm_api_key: str | None = None,
 ) -> dict[str, Any]:
-    client = LLMClient(llm_model)
+    client = LLMClient(llm_model, base_url=llm_base_url, api_key=llm_api_key)
     selected = selections or []
     if use_llm:
         if not client.configured:

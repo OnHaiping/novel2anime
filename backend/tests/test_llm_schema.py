@@ -62,6 +62,17 @@ def test_llm_parser_accepts_json_code_fence():
     )
 
 
+def test_llm_client_allows_request_scoped_connection_override():
+    client = LLMClient(
+        "cloud-model",
+        base_url="https://provider.example/v1/",
+        api_key="session-token",
+    )
+    assert client.model == "cloud-model"
+    assert client.base_url == "https://provider.example/v1"
+    assert client.api_key == "session-token"
+
+
 def test_prompt_generation_uses_edited_plan(monkeypatch):
     client = LLMClient("test-model")
     captured_prompts: list[str] = []

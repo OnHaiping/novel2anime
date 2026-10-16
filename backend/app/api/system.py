@@ -19,6 +19,7 @@ from .. import __version__
 from ..config import get_settings
 from ..database import get_db
 from ..models import AssetJob, AssetJobType, JobStatus
+from ..schemas import LLMConnectionConfig
 from ..services.comfyui import ComfyUIClient
 from ..services.diagnostics import run_diagnostics, tail
 from ..services.model_catalog import MODEL_CATALOG, catalog_status
@@ -41,6 +42,9 @@ def health():
             "editable_plan_json",
             "llm_prompt_refinement",
             "project_llm_model_selection",
+            "custom_llm_connection",
+            "global_task_center",
+            "character_reference_preview",
         ],
     }
 
@@ -58,13 +62,26 @@ def models():
 @router.get("/llm/models")
 async def llm_models():
     settings = get_settings()
+    return await _list_llm_models(
+        settings.llm_base_url, settings.llm_api_key, settings.llm_model
+    )
+
+
+@router.post("/llm/models")
+async def list_custom_llm_models(payload: LLMConnectionConfig):
+    return await _list_llm_models(
+        payload.base_url, payload.api_key or "", payload.model
+    )
+
+
+async def _list_llm_models(base_url: str, api_key: str, default_model: str):
     headers = {}
-    if settings.llm_api_key:
-        headers["Authorization"] = f"Bearer {settings.llm_api_key}"
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     try:
-        async with httpx.AsyncClient(timeout=min(settings.llm_timeout, 30)) as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             response = await client.get(
-                f"{settings.llm_base_url.rstrip('/')}/models", headers=headers
+                f"{base_url.rstrip('/')}/models", headers=headers
             )
             response.raise_for_status()
         data = response.json().get("data", [])
@@ -80,11 +97,11 @@ async def llm_models():
             502,
             f"无法从大模型服务读取模型列表：{exc}；仍可在项目中手动输入模型 ID",
         ) from exc
-    if settings.llm_model and settings.llm_model not in discovered:
-        discovered.insert(0, settings.llm_model)
+    if default_model and default_model not in discovered:
+        discovered.insert(0, default_model)
     return {
-        "base_url": settings.llm_base_url,
-        "default_model": settings.llm_model or None,
+        "base_url": base_url.rstrip("/"),
+        "default_model": default_model or None,
         "models": discovered,
     }
 

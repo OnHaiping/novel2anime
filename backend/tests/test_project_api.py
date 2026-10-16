@@ -25,6 +25,22 @@ def test_manual_text_selection_and_append_timeline(tmp_path, monkeypatch):
     client = TestClient(app)
     try:
         project = client.post("/api/projects", json={"name": "长篇测试"}).json()
+        llm_config = client.put(
+            f"/api/projects/{project['id']}/llm-config",
+            json={
+                "base_url": "https://api.example.test/v1",
+                "model": "example-chat",
+                "api_key": "must-not-be-persisted",
+            },
+        )
+        assert llm_config.status_code == 200
+        assert "must-not-be-persisted" not in llm_config.text
+        stored_llm_config = client.get(
+            f"/api/projects/{project['id']}/llm-config"
+        ).json()
+        assert stored_llm_config["base_url"] == "https://api.example.test/v1"
+        assert stored_llm_config["model"] == "example-chat"
+        assert stored_llm_config["api_key_saved"] is False
         selected_model = client.put(
             f"/api/projects/{project['id']}/llm-model",
             json={"model": "qwen-test:latest"},
@@ -79,6 +95,21 @@ def test_manual_text_selection_and_append_timeline(tmp_path, monkeypatch):
         ).json()
         assert first_selection["source_text"] == first_text
         assert second_selection["source_text"] == second_text
+
+        character = client.post(
+            f"/api/projects/{project['id']}/characters",
+            json={"name": "测试角色", "age": 25},
+        ).json()
+        reference = client.post(
+            f"/api/projects/{project['id']}/characters/{character['id']}/reference",
+            files={"file": ("reference.png", b"fake-png", "image/png")},
+        )
+        assert reference.status_code == 200
+        preview = client.get(
+            f"/api/projects/{project['id']}/characters/{character['id']}/reference"
+        )
+        assert preview.status_code == 200
+        assert preview.content == b"fake-png"
 
         first = client.post(
             f"/api/projects/{project['id']}/plan-draft",

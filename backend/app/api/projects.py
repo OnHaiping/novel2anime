@@ -17,6 +17,7 @@ from ..schemas import (
     CharacterCreate,
     CharacterPatch,
     CharacterRead,
+    LLMConnectionConfig,
     LLMModelSelection,
     NovelContentRead,
     NovelSelectionCreate,
@@ -24,6 +25,7 @@ from ..schemas import (
     NovelSelectionRead,
     PlanApplyRequest,
     PlanDraftUpdate,
+    PromptGenerationRequest,
     PlanRequest,
     ProjectCreate,
     ProjectRead,
@@ -81,16 +83,40 @@ def _selected_records(
     return records
 
 
-def _project_llm_model(project: Project, requested: str | None = None) -> str:
-    return (
-        (requested or "").strip()
-        or str((project.settings or {}).get("llm_model", "")).strip()
-        or get_settings().llm_model.strip()
-    )
+def _project_llm_config(
+    project: Project,
+    *,
+    model: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
+) -> dict[str, str]:
+    settings = get_settings()
+    configured = project.settings or {}
+    return {
+        "model": (
+            model or str(configured.get("llm_model", "")) or settings.llm_model
+        ).strip(),
+        "base_url": (
+            base_url or str(configured.get("llm_base_url", "")) or settings.llm_base_url
+        ).strip(),
+        # Tokens are deliberately request-scoped: they are never returned or stored in Project.settings.
+        "api_key": api_key if api_key is not None else settings.llm_api_key,
+    }
 
 
 def _save_project_llm_model(project: Project, model: str, db: Session) -> None:
     project.settings = {**(project.settings or {}), "llm_model": model}
+    db.commit()
+
+
+def _save_project_llm_config(
+    project: Project, base_url: str, model: str, db: Session
+) -> None:
+    project.settings = {
+        **(project.settings or {}),
+        "llm_base_url": base_url.rstrip("/"),
+        "llm_model": model,
+    }
     db.commit()
 
 
@@ -129,6 +155,38 @@ def select_project_llm_model(
     _save_project_llm_model(project, model, db)
     db.refresh(project)
     return project
+
+
+@router.get("/{project_id}/llm-config")
+def get_project_llm_config(project_id: str, db: Session = Depends(get_db)):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "项目不存在")
+    config = _project_llm_config(project)
+    return {
+        "base_url": config["base_url"],
+        "model": config["model"],
+        "api_key_saved": False,
+        "api_key_note": "令牌仅在当前浏览器会话中保存，提交请求时发送，不写入数据库。",
+    }
+
+
+@router.put("/{project_id}/llm-config")
+def update_project_llm_config(
+    project_id: str, payload: LLMConnectionConfig, db: Session = Depends(get_db)
+):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "项目不存在")
+    _save_project_llm_config(
+        project, payload.base_url.strip(), payload.model.strip(), db
+    )
+    return {
+        "base_url": payload.base_url.strip().rstrip("/"),
+        "model": payload.model.strip(),
+        "api_key_saved": False,
+        "api_key_note": "令牌仅在当前浏览器会话中保存，提交请求时发送，不写入数据库。",
+    }
 
 
 @router.delete("/{project_id}", status_code=204)
@@ -188,9 +246,16 @@ async def plan_project(
         raise HTTPException(400, "请先上传小说")
     selections = _selected_records(db, project_id, payload.selection_ids)
     selection_input = [(item.title, item.source_text) for item in selections]
-    llm_model = _project_llm_model(project, payload.llm_model)
-    if payload.use_llm and llm_model:
-        _save_project_llm_model(project, llm_model, db)
+    llm_config = _project_llm_config(
+        project,
+        model=payload.llm_model,
+        base_url=payload.llm_base_url,
+        api_key=payload.llm_api_key,
+    )
+    if payload.use_llm and llm_config["model"]:
+        _save_project_llm_config(
+            project, llm_config["base_url"], llm_config["model"], db
+        )
     try:
         characters, scenes, shots = await create_plan(
             db,
@@ -200,7 +265,9 @@ async def plan_project(
             payload.target_shot_seconds,
             selection_input,
             payload.append_to_timeline,
-            llm_model,
+            llm_config["model"],
+            llm_config["base_url"],
+            llm_config["api_key"],
         )
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -226,12 +293,25 @@ async def generate_plan_draft(
         raise HTTPException(404, "项目不存在")
     records = _selected_records(db, project_id, payload.selection_ids)
     selection_input = [(item.title, item.source_text) for item in records]
-    llm_model = _project_llm_model(project, payload.llm_model)
-    if payload.use_llm and llm_model:
-        _save_project_llm_model(project, llm_model, db)
+    llm_config = _project_llm_config(
+        project,
+        model=payload.llm_model,
+        base_url=payload.llm_base_url,
+        api_key=payload.llm_api_key,
+    )
+    if payload.use_llm and llm_config["model"]:
+        _save_project_llm_config(
+            project, llm_config["base_url"], llm_config["model"], db
+        )
     try:
         draft = await generate_plan(
-            project, payload.use_llm, payload.max_shots, selection_input, llm_model
+            project,
+            payload.use_llm,
+            payload.max_shots,
+            selection_input,
+            llm_config["model"],
+            llm_config["base_url"],
+            llm_config["api_key"],
         )
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -278,13 +358,27 @@ def update_plan_draft(
 
 
 @router.post("/{project_id}/plan-draft/prompts")
-async def generate_draft_prompts(project_id: str, db: Session = Depends(get_db)):
-    if not db.get(Project, project_id):
+async def generate_draft_prompts(
+    project_id: str,
+    payload: PromptGenerationRequest,
+    db: Session = Depends(get_db),
+):
+    project = db.get(Project, project_id)
+    if not project:
         raise HTTPException(404, "项目不存在")
     draft, _ = _load_draft(project_id)
     try:
-        project = db.get(Project, project_id)
-        enhanced = await LLMClient(_project_llm_model(project)).generate_prompts(draft)
+        llm_config = _project_llm_config(
+            project,
+            model=payload.llm_model,
+            base_url=payload.llm_base_url,
+            api_key=payload.llm_api_key,
+        )
+        enhanced = await LLMClient(
+            llm_config["model"],
+            base_url=llm_config["base_url"],
+            api_key=llm_config["api_key"],
+        ).generate_prompts(draft)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
@@ -465,6 +559,25 @@ async def upload_reference(
     db.commit()
     db.refresh(character)
     return character
+
+
+@router.get("/{project_id}/characters/{character_id}/reference")
+def get_character_reference(
+    project_id: str, character_id: str, db: Session = Depends(get_db)
+):
+    character = db.get(Character, character_id)
+    if not character or character.project_id != project_id:
+        raise HTTPException(404, "角色不存在")
+    if not character.reference_image:
+        raise HTTPException(404, "角色尚未设置参考图")
+    settings = get_settings()
+    root = (
+        settings.data_root / "projects" / project_id / "characters" / character_id
+    ).resolve()
+    path = (settings.data_root / character.reference_image).resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(404, "参考图文件不存在")
+    return FileResponse(path)
 
 
 @router.get("/{project_id}/scenes", response_model=list[SceneRead])

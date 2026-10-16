@@ -88,9 +88,17 @@ PROMPT_SYSTEM = """你是 Stable Diffusion/AnimateDiff 的日本动画提示词�
 
 
 class LLMClient:
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
         self.settings = get_settings()
         self.model = (model or self.settings.llm_model).strip()
+        self.base_url = (base_url or self.settings.llm_base_url).strip().rstrip("/")
+        self.api_key = api_key if api_key is not None else self.settings.llm_api_key
 
     @property
     def configured(self) -> bool:
@@ -194,8 +202,8 @@ class LLMClient:
         self, user_prompt: str, *, system_prompt: str = SYSTEM_PROMPT
     ) -> str:
         headers = {"Content-Type": "application/json"}
-        if self.settings.llm_api_key:
-            headers["Authorization"] = f"Bearer {self.settings.llm_api_key}"
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         payload = {
             "model": self.model,
             "temperature": 0.15,
@@ -205,7 +213,7 @@ class LLMClient:
                 {"role": "user", "content": user_prompt},
             ],
         }
-        url = f"{self.settings.llm_base_url.rstrip('/')}/chat/completions"
+        url = f"{self.base_url}/chat/completions"
         async with httpx.AsyncClient(timeout=self.settings.llm_timeout) as client:
             response = await client.post(url, headers=headers, json=payload)
             if response.status_code in {400, 422}:
