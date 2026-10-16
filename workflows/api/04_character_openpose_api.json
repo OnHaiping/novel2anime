@@ -1,0 +1,21 @@
+{
+  "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "meinamix_meinaV11.safetensors"}},
+  "2": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": "masterpiece, best quality, anime screencap"}},
+  "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": "worst quality, low quality, lowres, text, watermark"}},
+  "4": {"class_type": "ADE_LoadAnimateDiffModel", "inputs": {"model_name": "mm_sd_v15_v2.ckpt"}},
+  "5": {"class_type": "ADE_ApplyAnimateDiffModelSimple", "inputs": {"motion_model": ["4", 0]}},
+  "6": {"class_type": "ADE_StandardStaticContextOptions", "inputs": {"context_length": 16, "context_overlap": 4, "fuse_method": "pyramid", "use_on_equal_length": true, "start_percent": 0.0, "guarantee_steps": 1}},
+  "7": {"class_type": "IPAdapterUnifiedLoader", "inputs": {"model": ["1", 0], "preset": "PLUS (high strength)"}},
+  "8": {"class_type": "LoadImage", "inputs": {"image": "character_reference.png"}},
+  "9": {"class_type": "IPAdapterAdvanced", "inputs": {"model": ["7", 0], "ipadapter": ["7", 1], "image": ["8", 0], "weight": 0.55, "weight_type": "linear", "combine_embeds": "concat", "start_at": 0.0, "end_at": 0.8, "embeds_scaling": "V only"}},
+  "10": {"class_type": "ADE_UseEvolvedSampling", "inputs": {"model": ["9", 0], "beta_schedule": "autoselect", "m_models": ["5", 0], "context_options": ["6", 0]}},
+  "11": {"class_type": "VHS_LoadVideo", "inputs": {"video": "pose_driver.mp4", "force_rate": 8, "custom_width": 512, "custom_height": 512, "frame_load_cap": 16, "skip_first_frames": 0, "select_every_nth": 1, "format": "AnimateDiff"}},
+  "12": {"class_type": "OpenposePreprocessor", "inputs": {"image": ["11", 0], "detect_hand": "enable", "detect_body": "enable", "detect_face": "enable", "resolution": 512, "scale_stick_for_xinsr_cn": "disable"}},
+  "13": {"class_type": "ControlNetLoader", "inputs": {"control_net_name": "control_v11p_sd15_openpose.pth"}},
+  "14": {"class_type": "ControlNetApplyAdvanced", "inputs": {"positive": ["2", 0], "negative": ["3", 0], "control_net": ["13", 0], "image": ["12", 0], "strength": 0.7, "start_percent": 0.0, "end_percent": 0.8}},
+  "15": {"class_type": "EmptyLatentImage", "inputs": {"width": 512, "height": 512, "batch_size": 16}},
+  "16": {"class_type": "KSampler", "inputs": {"model": ["10", 0], "positive": ["14", 0], "negative": ["14", 1], "latent_image": ["15", 0], "seed": 123456789, "steps": 20, "cfg": 7.0, "sampler_name": "dpmpp_2m", "scheduler": "karras", "denoise": 1.0}},
+  "17": {"class_type": "VAEDecode", "inputs": {"samples": ["16", 0], "vae": ["1", 2]}},
+  "18": {"class_type": "VHS_VideoCombine", "inputs": {"images": ["17", 0], "frame_rate": 8, "loop_count": 0, "filename_prefix": "novel2anime/openpose", "format": "video/h264-mp4", "pix_fmt": "yuv420p", "crf": 19, "save_metadata": true, "trim_to_audio": false, "pingpong": false, "save_output": true}}
+}
+

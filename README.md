@@ -1,0 +1,284 @@
+# Novel2Anime
+
+把小说文本拆成结构化分镜，自动选择 ComfyUI 工作流，并在两张 GPU 上排队生成动漫镜头的本地系统。
+
+当前版本是可运行的 MVP，包含：
+
+- FastAPI 后端与 OpenAPI 文档；
+- React 管理界面；
+- PostgreSQL 项目数据库；
+- Redis + Celery 渲染队列；
+- ComfyUI API 客户端；
+- 双 ComfyUI Worker 调度；
+- 小说导入、启发式或 LLM 分镜；
+- 角色参考图与 IPAdapter；
+- 动作库、动作匹配与 FFmpeg 标准化；
+- FFmpeg 镜头规格统一与最终 MP4 拼接；
+- AnimateDiff / IPAdapter / OpenPose 三套 API 工作流；
+- ComfyUI 节点、模型、队列、日志诊断；
+- Docker Compose 部署。
+
+## 架构
+
+```text
+Browser :3000
+    │
+    ▼
+React / Nginx
+    │ /api
+    ▼
+FastAPI :8000 ───── PostgreSQL
+    │                    │
+    └──── Redis/Celery ──┘
+              │
+              ├── ComfyUI GPU0 :8188
+              └── ComfyUI GPU1 :8189
+```
+
+ComfyUI 使用宿主机现有 Conda 环境运行。Web、API、数据库和任务队列由 Docker Compose 管理。这样可以直接复用 `/work/comfyui/main` 中已经安装的 CUDA、模型和自定义节点。
+
+## 前提
+
+- Linux GPU 服务器；
+- Docker Engine 与 Compose v2；
+- NVIDIA 驱动；
+- Conda 环境名为 `comfyui`；
+- ComfyUI 位于 `/work/comfyui/main`；
+- 在该环境中能运行 `python main.py --enable-manager`；
+- FFmpeg；
+- 模型和自定义节点已经按下方清单安装。
+
+## 1. 克隆与配置
+
+```bash
+cd /work
+git clone https://github.com/OnHaiping/novel2anime.git
+cd novel2anime
+cp .env.example .env
+```
+
+必须修改 `.env`：
+
+```dotenv
+POSTGRES_PASSWORD=使用强密码
+SECRET_KEY=使用长随机字符串
+```
+
+如使用本地 Ollama/vLLM/OpenAI-compatible 服务：
+
+```dotenv
+LLM_BASE_URL=http://host.docker.internal:11434/v1
+LLM_MODEL=模型名称
+LLM_API_KEY=
+```
+
+`LLM_MODEL` 为空时，系统仍能用段落和句号做启发式分镜，方便测试完整链路。
+
+## 2. 启动 ComfyUI
+
+脚本会使用现有 Conda 环境，并把日志写入 `/work/comfyui/main/logs/`：
+
+```bash
+chmod +x scripts/*.sh
+./scripts/start-comfyui.sh dual
+```
+
+等价命令：
+
+```bash
+cd /work/comfyui/main
+
+CUDA_VISIBLE_DEVICES=0 conda run -n comfyui --no-capture-output \
+  python main.py --enable-manager --listen 0.0.0.0 --port 8188
+
+CUDA_VISIBLE_DEVICES=1 conda run -n comfyui --no-capture-output \
+  python main.py --enable-manager --listen 0.0.0.0 --port 8189
+```
+
+注意：每个进程只看到一张 GPU。两张 8GB 显卡不会合并为 16GB，但能并行生成两个镜头。
+
+如果只运行一个实例：
+
+```bash
+./scripts/start-comfyui.sh single
+```
+
+并将 `.env` 改成：
+
+```dotenv
+COMFYUI_WORKERS=gpu0=http://host.docker.internal:8188
+COMFYUI_LOG_FILES=/comfyui/logs/gpu0.log
+```
+
+## 3. 启动系统
+
+```bash
+./scripts/bootstrap.sh
+docker compose up -d
+docker compose logs -f --tail=200
+```
+
+访问：
+
+- Web：<http://服务器地址:3000>
+- API 文档：<http://服务器地址:8000/docs>
+- 健康检查：<http://服务器地址:8000/api/system/health>
+- 系统诊断：<http://服务器地址:8000/api/system/diagnostics>
+
+## 4. 必需模型
+
+完整下载来源、自动安装脚本以及 `.ckpt` 兼容说明见 [`docs/COMFYUI_SETUP.md`](docs/COMFYUI_SETUP.md)。
+
+```text
+/work/comfyui/main/models/checkpoints/meinamix_meinaV11.safetensors
+/work/comfyui/main/models/animatediff_models/mm_sd_v15_v2.ckpt
+/work/comfyui/main/models/ipadapter/ip-adapter-plus_sd15.safetensors
+/work/comfyui/main/models/clip_vision/CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors
+/work/comfyui/main/models/controlnet/control_v11p_sd15_openpose.pth
+/work/comfyui/main/models/controlnet/control_v11p_sd15_openpose.yaml
+```
+
+必需节点：
+
+```text
+ComfyUI-AnimateDiff-Evolved
+ComfyUI-VideoHelperSuite
+ComfyUI_IPAdapter_plus
+comfyui_controlnet_aux
+```
+
+运行诊断：
+
+```bash
+./scripts/doctor.sh
+```
+
+诊断会检查：
+
+- 两个 ComfyUI 实例是否在线；
+- `/system_stats` 和 `/queue`；
+- 必需模型是否存在及大小；
+- `/object_info` 是否包含必需节点；
+- 自定义节点目录；
+- ComfyUI 日志尾部；
+- 缺失模型和离线 Worker 汇总。
+
+## 5. 使用流程
+
+1. 在 Web 中新建项目。
+2. 上传 UTF-8 编码的 `.txt` 或 `.md` 小说。
+3. 点击“生成/重建分镜”。
+4. 检查角色，并上传角色参考图。
+5. 检查镜头的工作流选择。
+6. 在动作库上传常见动作视频。
+7. 点击“渲染全部待办”。
+8. 在渲染队列查看 GPU 分配、重试和报错。
+9. 全部镜头完成后点击“合成成片”，结果保存在 `data/projects/<项目ID>/final/final.mp4`。
+10. 在系统诊断查看 ComfyUI 日志与缺失内容。
+
+默认工作流路由：
+
+| 条件 | 工作流 |
+|---|---|
+| 无固定角色 | 02 环境/自由动画 |
+| 角色 + 静态/微动作 | 03 IPAdapter + AnimateDiff |
+| 角色 + 常见/复杂动作且动作库匹配 | 04 IPAdapter + OpenPose + AnimateDiff |
+| 要求动作但动作库没有素材 | 自动降级到 03，并标记 `free_fallback` |
+
+## 6. 动作库
+
+Web 上传动作视频时，后端会自动转换为：
+
+```text
+8 FPS
+16 帧
+512×512
+H.264
+yuv420p
+无音频
+```
+
+命令行也可以使用：
+
+```bash
+./scripts/normalize-motion.sh input.mp4 output.mp4
+```
+
+动作文件保存于 Docker 数据目录：
+
+```text
+data/motion_library/<action>/<motion_id>/source.mp4
+```
+
+## 7. ComfyUI API 工作流
+
+后端使用：
+
+```text
+workflows/api/02_environment_api.json
+workflows/api/03_character_free_motion_api.json
+workflows/api/04_character_openpose_api.json
+```
+
+这些是 API 格式，不是前端画布格式。生产部署前，应当在目标 ComfyUI 版本中运行对应画布工作流，然后通过 `Save (API Format)` 导出并对比节点输入。自定义节点升级可能改变字段。
+
+关键节点 ID 在：
+
+```text
+backend/app/services/workflow.py
+```
+
+修改工作流节点 ID 时必须同步修改这里。
+
+## 8. 数据和备份
+
+持久化内容：
+
+```text
+postgres_data Docker volume
+redis_data Docker volume
+./data 项目、角色参考图和动作库
+/work/comfyui/main/output ComfyUI 输出
+```
+
+备份：
+
+```bash
+docker compose exec postgres pg_dump -U novel2anime novel2anime > novel2anime.sql
+tar -czf novel2anime-data.tar.gz data
+```
+
+## 9. 开发和测试
+
+```bash
+docker compose run --rm backend pytest -q
+docker compose run --rm backend ruff check app tests
+docker compose build frontend
+```
+
+本地前端开发：
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+## 10. 当前边界
+
+当前 MVP 已实现单角色、动作库和批量镜头调度，但以下能力仍需继续迭代：
+
+- 多角色在同一画面的身份隔离；
+- 自动动作草稿生成及 OpenPose 质量评分；
+- 自动 RIFE 插帧和 AnimeSharp 放大（基础 FFmpeg 时间线拼接已经实现）；
+- 配音、口型、字幕和音效；
+- Alembic 正式数据库迁移；
+- 用户认证和多租户；
+- 生产环境 TLS、备份、配额与权限管理。
+
+第一版应先完成一段 30～60 秒、单主角、一个场景的无声样片，再扩大范围。
+
+## 11. 成人内容边界
+
+系统本身不内置成人模型。若部署方扩展成人内容，必须确保所有人物明确为成年人，不得使用未成年人、年龄模糊角色或未经许可的真实人物参考图，并应对输出目录和 Web 访问增加权限控制。
+
