@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import mimetypes
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
@@ -21,6 +24,59 @@ def list_jobs(limit: int = 100, db: Session = Depends(get_db)):
     return db.scalars(
         select(RenderJob).order_by(RenderJob.created_at.desc()).limit(min(limit, 500))
     ).all()
+
+
+def _completed_result(shot: Shot, db: Session) -> tuple[RenderJob, Path, str]:
+    if shot.status != ShotStatus.completed or not shot.output_file:
+        raise HTTPException(409, "镜头尚未生成完成")
+    job = db.scalar(
+        select(RenderJob)
+        .where(RenderJob.shot_id == shot.id)
+        .where(RenderJob.status == JobStatus.completed)
+        .order_by(RenderJob.completed_at.desc(), RenderJob.created_at.desc())
+    )
+    if not job:
+        raise HTTPException(404, "找不到该镜头的已完成任务记录")
+    settings = get_settings()
+    output_root = (settings.comfyui_root / "output").resolve()
+    path = (output_root / shot.output_file).resolve()
+    if output_root not in path.parents or not path.is_file():
+        raise HTTPException(404, f"镜头输出文件不存在：{shot.output_file}")
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return job, path, media_type
+
+
+@router.get("/shots/{shot_id}/result")
+def shot_result(shot_id: str, db: Session = Depends(get_db)):
+    shot = db.get(Shot, shot_id)
+    if not shot:
+        raise HTTPException(404, "镜头不存在")
+    job, path, media_type = _completed_result(shot, db)
+    return {
+        "shot_id": shot.id,
+        "code": shot.code,
+        "output_file": shot.output_file,
+        "filename": path.name,
+        "media_type": media_type,
+        "size": path.stat().st_size,
+        "worker_name": job.worker_name,
+        "comfy_prompt_id": job.comfy_prompt_id,
+        "completed_at": job.completed_at,
+        "output_metadata": job.output_metadata,
+        "preview_url": f"/api/renders/shots/{shot.id}/output",
+        "download_url": f"/api/renders/shots/{shot.id}/output?download=true",
+    }
+
+
+@router.get("/shots/{shot_id}/output")
+def shot_output(shot_id: str, download: bool = False, db: Session = Depends(get_db)):
+    shot = db.get(Shot, shot_id)
+    if not shot:
+        raise HTTPException(404, "镜头不存在")
+    _, path, media_type = _completed_result(shot, db)
+    if download:
+        return FileResponse(path, media_type=media_type, filename=path.name)
+    return FileResponse(path, media_type=media_type)
 
 
 @router.post("/shots/{shot_id}", response_model=RenderJobRead, status_code=202)

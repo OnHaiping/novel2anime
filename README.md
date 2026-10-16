@@ -191,7 +191,8 @@ comfyui_controlnet_aux
 6. 在动作库上传动作指导视频，或点击“AI 生成动作草稿”。生成结果会写入动作库。
 7. 在“模型下载”页一键下载 AnimateDiff、IPAdapter、CLIP Vision 和 OpenPose 模型；任务使用 `curl --continue-at -` 断点续传。
 8. 点击“渲染全部待办”，在任务队列查看 GPU 分配、下载/生成状态和完整报错。
-9. 全部镜头完成后点击“合成成片”，结果保存在 `data/projects/<项目ID>/final/final.mp4`。
+9. 镜头完成后，在镜头行点击“预览”：视频可直接播放，图片可直接查看，同时可检查 Worker、ComfyUI Prompt ID、文件大小并下载原始输出。
+10. 全部镜头完成后点击“合成成片”，结果保存在 `data/projects/<项目ID>/final/final.mp4`。
 
 默认工作流路由：
 

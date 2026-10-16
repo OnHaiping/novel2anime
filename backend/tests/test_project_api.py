@@ -3,6 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base, get_db
+from app.models import JobStatus, RenderJob, Shot, ShotStatus
 from app.main import app
 from app.config import get_settings
 
@@ -20,6 +21,7 @@ def test_manual_text_selection_and_append_timeline(tmp_path, monkeypatch):
 
     app.dependency_overrides[get_db] = override_db
     monkeypatch.setattr(get_settings(), "data_root", tmp_path / "data")
+    monkeypatch.setattr(get_settings(), "comfyui_root", tmp_path / "comfyui")
     client = TestClient(app)
     try:
         project = client.post("/api/projects", json={"name": "长篇测试"}).json()
@@ -91,6 +93,31 @@ def test_manual_text_selection_and_append_timeline(tmp_path, monkeypatch):
         selections = client.get(f"/api/projects/{project['id']}/selections").json()
         assert [item["process_count"] for item in selections] == [1, 1]
         assert all(item["last_processed_at"] for item in selections)
+
+        output_path = tmp_path / "comfyui" / "output" / "project" / "clip.mp4"
+        output_path.parent.mkdir(parents=True)
+        output_path.write_bytes(b"fake-mp4")
+        with testing_session() as session:
+            shot = session.get(Shot, shots[0]["id"])
+            shot.status = ShotStatus.completed
+            shot.output_file = "project/clip.mp4"
+            session.add(
+                RenderJob(
+                    shot_id=shot.id,
+                    worker_name="gpu0",
+                    comfy_prompt_id="prompt-1",
+                    status=JobStatus.completed,
+                    output_metadata={"files": [{"filename": "clip.mp4"}]},
+                )
+            )
+            session.commit()
+
+        result = client.get(f"/api/renders/shots/{shots[0]['id']}/result")
+        assert result.status_code == 200
+        assert result.json()["worker_name"] == "gpu0"
+        output = client.get(f"/api/renders/shots/{shots[0]['id']}/output")
+        assert output.status_code == 200
+        assert output.content == b"fake-mp4"
     finally:
         client.close()
         app.dependency_overrides.clear()

@@ -117,8 +117,12 @@ function CharacterItem({character,projectId,reload,run,notify}:{character:Charac
 }
 
 function ShotRow({shot,run,reload}:{shot:Shot;run:Runner;reload:()=>Promise<void>}) {
+  const [result,setResult]=useState<{filename:string;media_type:string;size:number;worker_name:string|null;comfy_prompt_id:string|null;completed_at:string|null;preview_url:string;download_url:string}|null>(null);
+  const [preview,setPreview]=useState(false);
   const render=()=>run(async()=>{await api(`/renders/shots/${shot.id}`,jsonInit('POST',{force:shot.status==='completed'}));await reload();});
-  return <div className="shot"><div className="shot-code">{shot.code}<small>WF {shot.workflow_key}</small></div><div className="shot-main"><strong>{shot.action||'未描述动作'}</strong><p>{shot.shot_type} · {shot.motion_mode}</p></div><Status value={shot.status}/><button onClick={render}>{shot.status==='completed'?'重新生成':'加入队列'}</button></div>;
+  const togglePreview=()=>run(async()=>{if(preview){setPreview(false);return}const data=await api<typeof result>(`/renders/shots/${shot.id}/result`);setResult(data);setPreview(true)});
+  const isImage=result?.media_type.startsWith('image/');
+  return <div className="shot-entry"><div className="shot"><div className="shot-code">{shot.code}<small>WF {shot.workflow_key}</small></div><div className="shot-main"><strong>{shot.action||'未描述动作'}</strong><p>{shot.shot_type} · {shot.motion_mode}</p></div><Status value={shot.status}/><div className="shot-actions">{shot.status==='completed'&&<button onClick={togglePreview}>{preview?'收起':'预览'}</button>}<button onClick={render}>{shot.status==='completed'?'重新生成':'加入队列'}</button></div></div>{preview&&result&&<div className="shot-preview">{isImage?<img src={result.preview_url} alt={`${shot.code} 输出`}/>:<video src={result.preview_url} controls preload="metadata"/>}<div className="preview-meta"><strong>{result.filename}</strong><span>{(result.size/1024/1024).toFixed(2)} MB · {result.media_type}</span><span>Worker：{result.worker_name??'未知'} · Prompt：{result.comfy_prompt_id??'未知'}</span><span>完成时间：{result.completed_at?new Date(result.completed_at).toLocaleString():'未知'}</span><a href={result.download_url}>下载原始输出</a></div></div>}</div>;
 }
 
 function Motions({run,notify}:{run:Runner;notify:(s:string)=>void}) {
