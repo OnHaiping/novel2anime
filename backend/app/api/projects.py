@@ -89,6 +89,7 @@ def _project_llm_config(
     model: str | None = None,
     base_url: str | None = None,
     api_key: str | None = None,
+    protocol: str | None = None,
 ) -> dict[str, str]:
     settings = get_settings()
     configured = project.settings or {}
@@ -101,6 +102,9 @@ def _project_llm_config(
         ).strip(),
         # Tokens are deliberately request-scoped: they are never returned or stored in Project.settings.
         "api_key": api_key if api_key is not None else settings.llm_api_key,
+        "protocol": (protocol or str(configured.get("llm_protocol", "")) or "openai")
+        .strip()
+        .lower(),
     }
 
 
@@ -110,12 +114,13 @@ def _save_project_llm_model(project: Project, model: str, db: Session) -> None:
 
 
 def _save_project_llm_config(
-    project: Project, base_url: str, model: str, db: Session
+    project: Project, base_url: str, model: str, protocol: str, db: Session
 ) -> None:
     project.settings = {
         **(project.settings or {}),
         "llm_base_url": base_url.rstrip("/"),
         "llm_model": model,
+        "llm_protocol": protocol,
     }
     db.commit()
 
@@ -166,6 +171,7 @@ def get_project_llm_config(project_id: str, db: Session = Depends(get_db)):
     return {
         "base_url": config["base_url"],
         "model": config["model"],
+        "protocol": config["protocol"],
         "api_key_saved": False,
         "api_key_note": "令牌仅在当前浏览器会话中保存，提交请求时发送，不写入数据库。",
     }
@@ -178,12 +184,16 @@ def update_project_llm_config(
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(404, "项目不存在")
+    protocol = payload.protocol.strip().lower()
+    if protocol not in {"openai", "anthropic"}:
+        raise HTTPException(400, "协议仅支持 openai 或 anthropic")
     _save_project_llm_config(
-        project, payload.base_url.strip(), payload.model.strip(), db
+        project, payload.base_url.strip(), payload.model.strip(), protocol, db
     )
     return {
         "base_url": payload.base_url.strip().rstrip("/"),
         "model": payload.model.strip(),
+        "protocol": protocol,
         "api_key_saved": False,
         "api_key_note": "令牌仅在当前浏览器会话中保存，提交请求时发送，不写入数据库。",
     }
@@ -251,10 +261,15 @@ async def plan_project(
         model=payload.llm_model,
         base_url=payload.llm_base_url,
         api_key=payload.llm_api_key,
+        protocol=payload.llm_protocol,
     )
     if payload.use_llm and llm_config["model"]:
         _save_project_llm_config(
-            project, llm_config["base_url"], llm_config["model"], db
+            project,
+            llm_config["base_url"],
+            llm_config["model"],
+            llm_config["protocol"],
+            db,
         )
     try:
         characters, scenes, shots = await create_plan(
@@ -268,6 +283,7 @@ async def plan_project(
             llm_config["model"],
             llm_config["base_url"],
             llm_config["api_key"],
+            llm_config["protocol"],
         )
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -298,10 +314,15 @@ async def generate_plan_draft(
         model=payload.llm_model,
         base_url=payload.llm_base_url,
         api_key=payload.llm_api_key,
+        protocol=payload.llm_protocol,
     )
     if payload.use_llm and llm_config["model"]:
         _save_project_llm_config(
-            project, llm_config["base_url"], llm_config["model"], db
+            project,
+            llm_config["base_url"],
+            llm_config["model"],
+            llm_config["protocol"],
+            db,
         )
     try:
         draft = await generate_plan(
@@ -312,6 +333,7 @@ async def generate_plan_draft(
             llm_config["model"],
             llm_config["base_url"],
             llm_config["api_key"],
+            llm_config["protocol"],
         )
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -373,11 +395,13 @@ async def generate_draft_prompts(
             model=payload.llm_model,
             base_url=payload.llm_base_url,
             api_key=payload.llm_api_key,
+            protocol=payload.llm_protocol,
         )
         enhanced = await LLMClient(
             llm_config["model"],
             base_url=llm_config["base_url"],
             api_key=llm_config["api_key"],
+            protocol=llm_config["protocol"],
         ).generate_prompts(draft)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc

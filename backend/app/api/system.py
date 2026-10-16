@@ -69,15 +69,26 @@ async def llm_models():
 
 @router.post("/llm/models")
 async def list_custom_llm_models(payload: LLMConnectionConfig):
+    if payload.protocol not in {"openai", "anthropic"}:
+        raise HTTPException(400, "协议仅支持 openai 或 anthropic")
     return await _list_llm_models(
-        payload.base_url, payload.api_key or "", payload.model
+        payload.base_url, payload.api_key or "", payload.model, payload.protocol
     )
 
 
-async def _list_llm_models(base_url: str, api_key: str, default_model: str):
+async def _list_llm_models(
+    base_url: str,
+    api_key: str,
+    default_model: str,
+    protocol: str = "openai",
+):
     headers = {}
     if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+        if protocol == "anthropic":
+            headers["x-api-key"] = api_key
+            headers["anthropic-version"] = "2023-06-01"
+        else:
+            headers["Authorization"] = f"Bearer {api_key}"
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.get(

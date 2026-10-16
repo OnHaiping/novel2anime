@@ -210,6 +210,7 @@ class PlanRequest(BaseModel):
     llm_model: str | None = Field(default=None, min_length=1, max_length=300)
     llm_base_url: str | None = Field(default=None, min_length=8, max_length=1000)
     llm_api_key: str | None = Field(default=None, max_length=2000)
+    llm_protocol: str | None = Field(default=None, max_length=30)
     append_to_timeline: bool = False
     target_shot_seconds: float = Field(default=2.0, ge=1.0, le=6.0)
     max_shots: int = Field(default=30, ge=1, le=300)
@@ -228,12 +229,14 @@ class LLMConnectionConfig(BaseModel):
     base_url: str = Field(min_length=8, max_length=1000)
     model: str = Field(min_length=1, max_length=300)
     api_key: str | None = Field(default=None, max_length=2000)
+    protocol: str = Field(default="openai", max_length=30)
 
 
 class PromptGenerationRequest(BaseModel):
     llm_base_url: str | None = Field(default=None, min_length=8, max_length=1000)
     llm_model: str | None = Field(default=None, min_length=1, max_length=300)
     llm_api_key: str | None = Field(default=None, max_length=2000)
+    llm_protocol: str | None = Field(default=None, max_length=30)
 
 
 class PlanApplyRequest(BaseModel):

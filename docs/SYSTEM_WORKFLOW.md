@@ -44,7 +44,7 @@ LLM_MAX_SELECTION_CHARS=12000
 LLM_MAX_RETRIES=2
 ```
 
-`LLM_BASE_URL` 和密钥用于连接服务，`LLM_MODEL` 只是可选的默认模型。每个项目的“大模型连接”可以自行填写 OpenAI-compatible API 地址、模型名和令牌，适用于 DeepSeek、智谱、OpenAI、Kimi、Grok、兼容网关及本地 Ollama/vLLM。地址和模型名保存到项目；令牌只保留在当前浏览器会话并随请求发送，不写入项目数据库。点击“刷新该地址的模型列表”会调用该地址的 `/models` 接口；不支持该接口的服务也可以直接手动填写模型名。
+`LLM_BASE_URL` 和密钥用于连接服务，`LLM_MODEL` 只是可选的默认模型。每个项目的“大模型连接”可以自行填写地址、模型名和令牌：DeepSeek、智谱、OpenAI、Kimi、Grok、兼容网关及本地 Ollama/vLLM 选择 `OpenAI-compatible`；Claude 原生地址选择 `Anthropic Messages`。地址、模型名和协议保存到项目；令牌只保留在当前浏览器会话并随请求发送，不写入项目数据库。点击“刷新该地址的模型列表”会调用该地址的 `/models` 接口；不支持该接口的服务也可以直接手动填写模型名。
 
 系统提示词位于 `backend/app/services/llm.py`。它要求模型：只使用原文剧情、解析代词、保持角色姓名稳定、保存对应原文短摘录、使用可生成的视觉描述，并且只返回满足 JSON Schema 的对象。结构固定为：
 

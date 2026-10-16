@@ -94,11 +94,15 @@ class LLMClient:
         *,
         base_url: str | None = None,
         api_key: str | None = None,
+        protocol: str | None = None,
     ) -> None:
         self.settings = get_settings()
         self.model = (model or self.settings.llm_model).strip()
         self.base_url = (base_url or self.settings.llm_base_url).strip().rstrip("/")
         self.api_key = api_key if api_key is not None else self.settings.llm_api_key
+        self.protocol = (protocol or "openai").strip().lower()
+        if self.protocol not in {"openai", "anthropic"}:
+            raise ValueError("LLM 协议仅支持 openai 或 anthropic")
 
     @property
     def configured(self) -> bool:
@@ -202,25 +206,41 @@ class LLMClient:
         self, user_prompt: str, *, system_prompt: str = SYSTEM_PROMPT
     ) -> str:
         headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        payload = {
-            "model": self.model,
-            "temperature": 0.15,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        }
-        url = f"{self.base_url}/chat/completions"
+        if self.protocol == "anthropic":
+            if self.api_key:
+                headers["x-api-key"] = self.api_key
+            headers["anthropic-version"] = "2023-06-01"
+            payload = {
+                "model": self.model,
+                "max_tokens": 8192,
+                "temperature": 0.15,
+                "system": system_prompt,
+                "messages": [{"role": "user", "content": user_prompt}],
+            }
+            url = f"{self.base_url}/messages"
+        else:
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            payload = {
+                "model": self.model,
+                "temperature": 0.15,
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            }
+            url = f"{self.base_url}/chat/completions"
         async with httpx.AsyncClient(timeout=self.settings.llm_timeout) as client:
             response = await client.post(url, headers=headers, json=payload)
-            if response.status_code in {400, 422}:
+            if self.protocol == "openai" and response.status_code in {400, 422}:
                 payload.pop("response_format", None)
                 response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        data = response.json()
+        if self.protocol == "anthropic":
+            return data["content"][0]["text"]
+        return data["choices"][0]["message"]["content"]
 
     @staticmethod
     def _parse_json(content: str) -> dict[str, Any]:

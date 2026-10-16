@@ -66,9 +66,17 @@ async def create_plan(
     llm_model: str | None = None,
     llm_base_url: str | None = None,
     llm_api_key: str | None = None,
+    llm_protocol: str | None = None,
 ) -> tuple[int, int, int]:
     plan = await generate_plan(
-        project, use_llm, max_shots, selections, llm_model, llm_base_url, llm_api_key
+        project,
+        use_llm,
+        max_shots,
+        selections,
+        llm_model,
+        llm_base_url,
+        llm_api_key,
+        llm_protocol,
     )
     return apply_plan(
         db,
@@ -88,8 +96,14 @@ async def generate_plan(
     llm_model: str | None = None,
     llm_base_url: str | None = None,
     llm_api_key: str | None = None,
+    llm_protocol: str | None = None,
 ) -> dict[str, Any]:
-    client = LLMClient(llm_model, base_url=llm_base_url, api_key=llm_api_key)
+    client = LLMClient(
+        llm_model,
+        base_url=llm_base_url,
+        api_key=llm_api_key,
+        protocol=llm_protocol,
+    )
     selected = selections or []
     if use_llm:
         if not client.configured:
