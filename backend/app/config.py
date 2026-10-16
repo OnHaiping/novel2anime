@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = ""
     llm_timeout: int = 120
+    llm_max_selection_chars: int = 12000
+    llm_max_retries: int = 2
     render_timeout: int = 1800
     required_custom_nodes: list[str] = Field(
         default_factory=lambda: [

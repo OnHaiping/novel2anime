@@ -10,8 +10,14 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..database import get_db
-from ..models import MotionAsset
-from ..schemas import MotionAssetCreate, MotionAssetRead
+from ..models import AssetJob, AssetJobType, JobStatus, MotionAsset
+from ..schemas import (
+    AssetJobRead,
+    MotionAssetCreate,
+    MotionAssetRead,
+    MotionGenerateRequest,
+)
+from ..tasks import generate_asset_job
 
 
 router = APIRouter(prefix="/motions", tags=["motions"])
@@ -33,6 +39,33 @@ def create_motion(payload: MotionAssetCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(motion)
     return motion
+
+
+@router.post("/generate", response_model=AssetJobRead, status_code=202)
+def generate_motion(payload: MotionGenerateRequest, db: Session = Depends(get_db)):
+    if db.scalar(select(MotionAsset).where(MotionAsset.motion_id == payload.motion_id)):
+        raise HTTPException(409, "motion_id 已存在")
+    pending_jobs = db.scalars(
+        select(AssetJob)
+        .where(AssetJob.job_type == AssetJobType.motion)
+        .where(AssetJob.status.in_([JobStatus.queued, JobStatus.running]))
+    ).all()
+    if any(
+        job.request_json.get("motion_id") == payload.motion_id for job in pending_jobs
+    ):
+        raise HTTPException(409, "该 motion_id 已在生成队列中")
+    job = AssetJob(
+        job_type=AssetJobType.motion,
+        status=JobStatus.queued,
+        request_json=payload.model_dump(),
+    )
+    db.add(job)
+    db.commit()
+    task = generate_asset_job.delay(job.id)
+    job.celery_task_id = task.id
+    db.commit()
+    db.refresh(job)
+    return job
 
 
 @router.post("/upload", response_model=MotionAssetRead, status_code=201)
@@ -84,7 +117,7 @@ async def upload_motion(
 
 @router.delete("/{motion_id}", status_code=204)
 def delete_motion(motion_id: str, db: Session = Depends(get_db)):
-    motion = db.get(MotionAsset, motion_id)
+    motion = db.scalar(select(MotionAsset).where(MotionAsset.motion_id == motion_id))
     if not motion:
         raise HTTPException(404, "动作不存在")
     db.delete(motion)

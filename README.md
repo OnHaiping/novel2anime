@@ -2,6 +2,8 @@
 
 把小说文本拆成结构化分镜，自动选择 ComfyUI 工作流，并在两张 GPU 上排队生成动漫镜头的本地系统。
 
+完整的数据流、人工选段、固定 LLM JSON、立绘和动作库说明见 [`docs/SYSTEM_WORKFLOW.md`](docs/SYSTEM_WORKFLOW.md)。
+
 当前版本是可运行的 MVP，包含：
 
 - FastAPI 后端与 OpenAPI 文档；
@@ -10,9 +12,10 @@
 - Redis + Celery 渲染队列；
 - ComfyUI API 客户端；
 - 双 ComfyUI Worker 调度；
-- 小说导入、启发式或 LLM 分镜；
-- 角色参考图与 IPAdapter；
-- 动作库、动作匹配与 FFmpeg 标准化；
+- 长篇/短篇类型选择、原文展示、人工划线选段记录与严格 LLM JSON 校验；
+- 可编辑角色设定、参考图上传、AI 立绘生成与 IPAdapter；
+- 动作库上传、AI 动作草稿生成、动作匹配与 FFmpeg 标准化；
+- Web 模型目录与基于 `curl` 的断点续传下载器；
 - FFmpeg 镜头规格统一与最终 MP4 拼接；
 - AnimateDiff / IPAdapter / OpenPose 三套 API 工作流；
 - ComfyUI 节点、模型、队列、日志诊断；
@@ -73,6 +76,8 @@ APP_ORIGIN=http://服务器IP:3300
 LLM_BASE_URL=http://host.docker.internal:11434/v1
 LLM_MODEL=模型名称
 LLM_API_KEY=
+LLM_MAX_SELECTION_CHARS=12000
+LLM_MAX_RETRIES=2
 ```
 
 `LLM_MODEL` 为空时，系统仍能用段落和句号做启发式分镜，方便测试完整链路。
@@ -168,16 +173,15 @@ comfyui_controlnet_aux
 
 ## 5. 使用流程
 
-1. 在 Web 中新建项目。
-2. 上传 UTF-8 编码的 `.txt` 或 `.md` 小说。
-3. 点击“生成/重建分镜”。
-4. 检查角色，并上传角色参考图。
-5. 检查镜头的工作流选择。
-6. 在动作库上传常见动作视频。
-7. 点击“渲染全部待办”。
-8. 在渲染队列查看 GPU 分配、重试和报错。
+1. 在 Web 中新建项目，选择“长篇小说”或“短篇小说”，上传 UTF-8 `.txt`/`.md`。
+2. 系统原样显示小说，不自动识别章节或切块。在原文中拖动划线，保存一个或多个有标题的选段记录。
+3. 勾选本次处理的选段，并设置最大镜头数。单条选段不能超过 `LLM_MAX_SELECTION_CHARS`。
+4. 配置 `LLM_MODEL` 后启用大模型。后端把每条选段原样提交并使用固定 JSON Schema 校验；无效结果会自动重试。
+5. 编辑角色名称、年龄、外貌和提示词。没有参考图时点击“AI 生成立绘”，完成后会自动成为后续视频的 IPAdapter 参考图。
+6. 在动作库上传动作指导视频，或点击“AI 生成动作草稿”。生成结果会写入动作库。
+7. 在“模型下载”页一键下载 AnimateDiff、IPAdapter、CLIP Vision 和 OpenPose 模型；任务使用 `curl --continue-at -` 断点续传。
+8. 点击“渲染全部待办”，在任务队列查看 GPU 分配、下载/生成状态和完整报错。
 9. 全部镜头完成后点击“合成成片”，结果保存在 `data/projects/<项目ID>/final/final.mp4`。
-10. 在系统诊断查看 ComfyUI 日志与缺失内容。
 
 默认工作流路由：
 
@@ -218,9 +222,11 @@ data/motion_library/<action>/<motion_id>/source.mp4
 后端使用：
 
 ```text
+workflows/api/01_character_portrait_api.json
 workflows/api/02_environment_api.json
 workflows/api/03_character_free_motion_api.json
 workflows/api/04_character_openpose_api.json
+workflows/api/05_motion_draft_api.json
 ```
 
 这些是 API 格式，不是前端画布格式。生产部署前，应当在目标 ComfyUI 版本中运行对应画布工作流，然后通过 `Save (API Format)` 导出并对比节点输入。自定义节点升级可能改变字段。

@@ -18,6 +18,8 @@ def heuristic_plan(text: str, max_shots: int = 30) -> dict[str, Any]:
     scenes: list[dict[str, Any]] = []
     count = 0
     for scene_index, paragraph in enumerate(paragraphs, 1):
+        if count >= max_shots:
+            break
         sentences = [
             s.strip() for s in re.split(r"(?<=[。！？!?])", paragraph) if s.strip()
         ]
@@ -59,18 +61,51 @@ async def create_plan(
     use_llm: bool,
     max_shots: int,
     target_shot_seconds: float = 2.0,
+    selections: list[tuple[str, str]] | None = None,
+    append_to_timeline: bool = False,
 ) -> tuple[int, int, int]:
     client = LLMClient()
+    selected = selections or []
     if use_llm and client.configured:
-        plan = await client.plan(project.novel_text)
+        plan = {"characters": [], "scenes": []}
+        known: dict[str, dict[str, Any]] = {
+            character.name: {
+                "name": character.name,
+                "age": character.age,
+                "description": character.description,
+                "positive_prompt": character.positive_prompt,
+            }
+            for character in project.characters
+        }
+        planned_shots = 0
+        for selection_title, selection_text in selected:
+            result = await client.plan_chunk(
+                selection_text,
+                selection_title=selection_title,
+                known_characters=list(known.values()),
+            )
+            for character in result.get("characters", []):
+                name = character.get("name", "").strip()
+                if name:
+                    known[name] = {**known.get(name, {}), **character}
+            scenes = result.get("scenes", [])
+            plan["scenes"].extend(scenes)
+            planned_shots += sum(len(scene.get("shots", [])) for scene in scenes)
+            if planned_shots >= max_shots:
+                break
+        plan["characters"] = list(known.values())
     else:
-        plan = heuristic_plan(project.novel_text, max_shots=max_shots)
+        combined = "\n\n".join(
+            f"{title}\n{text}" for title, text in selected if text.strip()
+        )
+        plan = heuristic_plan(combined, max_shots=max_shots)
 
-    for shot in list(project.shots):
-        db.delete(shot)
-    for scene in list(project.scenes):
-        db.delete(scene)
-    db.flush()
+    if not append_to_timeline:
+        for shot in list(project.shots):
+            db.delete(shot)
+        for scene in list(project.scenes):
+            db.delete(scene)
+        db.flush()
 
     # 重建分镜时保留手工上传的角色和参考图，并用规划结果补充角色描述。
     character_by_name: dict[str, Character] = {
@@ -94,8 +129,19 @@ async def create_plan(
         db.flush()
         character_by_name[character.name] = character
 
-    shot_sequence = 0
-    for scene_sequence, scene_data in enumerate(plan.get("scenes", []), 1):
+    scene_offset = (
+        max((scene.sequence for scene in project.scenes), default=0)
+        if append_to_timeline
+        else 0
+    )
+    shot_sequence = (
+        max((shot.sequence for shot in project.shots), default=0)
+        if append_to_timeline
+        else 0
+    )
+    generated_shots = 0
+    for relative_scene_sequence, scene_data in enumerate(plan.get("scenes", []), 1):
+        scene_sequence = scene_offset + relative_scene_sequence
         scene = Scene(
             project_id=project.id,
             sequence=scene_sequence,
@@ -109,9 +155,10 @@ async def create_plan(
         db.add(scene)
         db.flush()
         for shot_data in scene_data.get("shots", []):
-            if shot_sequence >= max_shots:
+            if generated_shots >= max_shots:
                 break
             shot_sequence += 1
+            generated_shots += 1
             names = shot_data.get("characters", [])
             if not names and len(character_by_name) == 1:
                 names = list(character_by_name)
@@ -162,4 +209,4 @@ async def create_plan(
 
     project.status = ProjectStatus.planned
     db.commit()
-    return len(character_by_name), len(plan.get("scenes", [])), shot_sequence
+    return len(character_by_name), len(plan.get("scenes", [])), generated_shots

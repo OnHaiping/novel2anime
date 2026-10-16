@@ -21,6 +21,11 @@ def build_prompts(
     positive_parts = [BASE_POSITIVE]
     negative_parts = [BASE_NEGATIVE]
     for character in characters:
+        positive_parts.append(character.name)
+        if character.age is not None:
+            positive_parts.append(f"adult {character.age}-year-old character")
+        if character.description:
+            positive_parts.append(character.description)
         if character.positive_prompt:
             positive_parts.append(character.positive_prompt)
         if character.negative_prompt:

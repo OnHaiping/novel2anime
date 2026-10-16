@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
+import subprocess
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,9 +14,12 @@ from sqlalchemy import select
 from .config import get_settings
 from .database import SessionLocal
 from .models import (
+    AssetJob,
+    AssetJobType,
     AssemblyStatus,
     Character,
     JobStatus,
+    MotionAsset,
     Project,
     ProjectStatus,
     RenderJob,
@@ -22,7 +27,9 @@ from .models import (
     ShotStatus,
 )
 from .services.assembler import assemble_project
+from .services.asset_workflows import build_motion_workflow, build_portrait_workflow
 from .services.comfyui import ComfyUIClient
+from .services.model_catalog import MODEL_CATALOG
 from .services.workflow import WorkflowBuilder
 
 
@@ -147,6 +154,174 @@ async def _run_render(job_id: str) -> None:
 )
 def render_job(self, job_id: str) -> None:
     asyncio.run(_run_render(job_id))
+
+
+def _comfy_output_path(item: dict) -> Path:
+    path = (
+        settings.comfyui_root
+        / ("output" if item.get("type", "output") == "output" else "temp")
+        / item.get("subfolder", "")
+        / item["filename"]
+    ).resolve()
+    root = settings.comfyui_root.resolve()
+    if root not in path.parents or not path.is_file():
+        raise FileNotFoundError(f"ComfyUI 输出不存在：{path}")
+    return path
+
+
+async def _run_asset_job(job_id: str) -> None:
+    redis_client = Redis.from_url(settings.redis_url)
+    worker_lock = None
+    with SessionLocal() as db:
+        job = db.get(AssetJob, job_id)
+        if not job:
+            raise ValueError(f"资产任务不存在：{job_id}")
+        try:
+            worker_name, worker_url, worker_lock = _select_worker(redis_client)
+            job.worker_name = worker_name
+            job.status = JobStatus.running
+            job.started_at = now()
+            db.commit()
+            client = ComfyUIClient(worker_url, timeout=settings.render_timeout)
+            await client.health()
+            if job.job_type == AssetJobType.portrait:
+                character = db.get(Character, job.character_id)
+                if not character:
+                    raise ValueError("角色不存在")
+                workflow = build_portrait_workflow(character, job.request_json)
+            elif job.job_type == AssetJobType.motion:
+                workflow = build_motion_workflow(job.request_json)
+            else:
+                raise ValueError(f"不支持的资产任务：{job.job_type}")
+
+            prompt_id = await client.submit(workflow)
+            job.comfy_prompt_id = prompt_id
+            db.commit()
+            history = await client.wait(prompt_id)
+            outputs = client.extract_outputs(history)
+            if not outputs:
+                raise RuntimeError("ComfyUI 没有返回输出文件")
+            source = _comfy_output_path(outputs[-1])
+
+            if job.job_type == AssetJobType.portrait:
+                character = db.get(Character, job.character_id)
+                target_dir = (
+                    settings.data_root
+                    / "projects"
+                    / str(job.project_id)
+                    / "characters"
+                    / str(job.character_id)
+                )
+                target_dir.mkdir(parents=True, exist_ok=True)
+                target = target_dir / f"generated{source.suffix.lower()}"
+                shutil.copy2(source, target)
+                character.reference_image = str(
+                    target.relative_to(settings.data_root)
+                ).replace("\\", "/")
+            else:
+                request = job.request_json
+                safe_action = Path(request["action"]).name
+                safe_id = Path(request["motion_id"]).name
+                target_dir = (
+                    settings.data_root / "motion_library" / safe_action / safe_id
+                )
+                target_dir.mkdir(parents=True, exist_ok=True)
+                target = target_dir / "source.mp4"
+                shutil.copy2(source, target)
+                motion = MotionAsset(
+                    motion_id=request["motion_id"],
+                    name=request["name"],
+                    action=request["action"],
+                    speed=request.get("speed", "normal"),
+                    direction=request.get("direction", "any"),
+                    shot_type=request.get("shot_type", "full body"),
+                    camera=request.get("camera", "static"),
+                    source_type="generated",
+                    source_file=str(target.relative_to(settings.data_root)).replace(
+                        "\\", "/"
+                    ),
+                    tags=request.get("tags", []),
+                )
+                db.add(motion)
+
+            job.output_metadata = {"files": outputs, "saved_file": str(target)}
+            job.status = JobStatus.completed
+            job.completed_at = now()
+            db.commit()
+        except Exception as exc:
+            job.status = JobStatus.failed
+            job.completed_at = now()
+            job.error_message = f"{exc}\n{traceback.format_exc(limit=12)}"
+            db.commit()
+            raise
+        finally:
+            if worker_lock is not None:
+                try:
+                    worker_lock.release()
+                except Exception:
+                    pass
+
+
+@celery_app.task(
+    bind=True,
+    autoretry_for=(RuntimeError,),
+    retry_backoff=5,
+    retry_kwargs={"max_retries": 20},
+)
+def generate_asset_job(self, job_id: str) -> None:
+    asyncio.run(_run_asset_job(job_id))
+
+
+@celery_app.task(bind=True, time_limit=7500, soft_time_limit=7350)
+def download_model_job(self, job_id: str) -> str:
+    with SessionLocal() as db:
+        job = db.get(AssetJob, job_id)
+        if not job:
+            raise ValueError(f"下载任务不存在：{job_id}")
+        job.status = JobStatus.running
+        job.started_at = now()
+        db.commit()
+        try:
+            key = job.request_json["model_key"]
+            item = MODEL_CATALOG[key]
+            target = (settings.comfyui_root / item["target"]).resolve()
+            root = settings.comfyui_root.resolve()
+            if root not in target.parents:
+                raise ValueError("非法模型目标路径")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            partial = target.with_suffix(target.suffix + ".part")
+            result = subprocess.run(
+                [
+                    "curl",
+                    "--fail",
+                    "--location",
+                    "--retry",
+                    "3",
+                    "--continue-at",
+                    "-",
+                    "--output",
+                    str(partial),
+                    item["url"],
+                ],
+                capture_output=True,
+                text=True,
+                timeout=7200,
+                check=False,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"curl 下载失败：{result.stderr[-3000:]}")
+            partial.replace(target)
+            job.output_metadata = {"path": str(target), "size": target.stat().st_size}
+            job.status = JobStatus.completed
+            job.completed_at = now()
+            db.commit()
+            return str(target)
+        except Exception as exc:
+            job.status = JobStatus.failed
+            job.completed_at = now()
+            job.error_message = f"{exc}\n{traceback.format_exc(limit=12)}"
+            db.commit()
+            raise
 
 
 @celery_app.task(bind=True)

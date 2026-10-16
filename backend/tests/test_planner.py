@@ -30,7 +30,9 @@ def test_replanning_preserves_manual_character_and_reference():
         db.add(character)
         db.commit()
 
-        asyncio.run(create_plan(db, project, False, 10, 2.5))
+        asyncio.run(
+            create_plan(db, project, False, 10, 2.5, [("人工选段", project.novel_text)])
+        )
         db.refresh(character)
 
         assert character.reference_image == "projects/reference.png"

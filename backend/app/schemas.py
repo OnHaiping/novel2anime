@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .models import AssemblyStatus, JobStatus, ProjectStatus, ShotStatus
+from .models import AssetJobType, AssemblyStatus, JobStatus, ProjectStatus, ShotStatus
 
 
 class ORMModel(BaseModel):
@@ -41,6 +41,15 @@ class CharacterCreate(BaseModel):
     default_ipadapter_weight: float = Field(default=0.65, ge=0, le=2)
 
 
+class CharacterPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    age: int | None = Field(default=None, ge=18)
+    description: str | None = None
+    positive_prompt: str | None = None
+    negative_prompt: str | None = None
+    default_ipadapter_weight: float | None = Field(default=None, ge=0, le=2)
+
+
 class CharacterRead(ORMModel):
     id: str
     project_id: str
@@ -63,6 +72,38 @@ class SceneRead(ORMModel):
     weather: str
     summary: str
     source_text: str
+
+
+class NovelSelectionRead(ORMModel):
+    id: str
+    project_id: str
+    sequence: int
+    title: str
+    source_text: str
+    char_start: int
+    char_end: int
+    selected: bool
+    summary: str
+    process_count: int
+    last_processed_at: datetime | None
+
+
+class NovelSelectionCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    char_start: int = Field(ge=0)
+    char_end: int = Field(gt=0)
+
+
+class NovelSelectionPatch(BaseModel):
+    selected: bool | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+
+
+class NovelContentRead(BaseModel):
+    novel_type: str
+    text: str
+    length: int
+    max_selection_chars: int
 
 
 class ShotPatch(BaseModel):
@@ -166,8 +207,10 @@ class RenderJobRead(ORMModel):
 
 class PlanRequest(BaseModel):
     use_llm: bool = True
+    append_to_timeline: bool = False
     target_shot_seconds: float = Field(default=2.0, ge=1.0, le=6.0)
     max_shots: int = Field(default=30, ge=1, le=300)
+    selection_ids: list[str] | None = None
 
 
 class RenderRequest(BaseModel):
@@ -179,3 +222,40 @@ class AssembleRequest(BaseModel):
     height: int = Field(default=576, ge=256, le=2160)
     fps: int = Field(default=24, ge=1, le=60)
     crf: int = Field(default=18, ge=0, le=51)
+
+
+class PortraitGenerateRequest(BaseModel):
+    extra_prompt: str = "character design sheet, solo, full body, simple background"
+    seed: int = 10001
+    width: int = Field(default=512, ge=256, le=1024)
+    height: int = Field(default=768, ge=256, le=1024)
+
+
+class MotionGenerateRequest(BaseModel):
+    motion_id: str = Field(min_length=1, max_length=160)
+    name: str = Field(min_length=1, max_length=200)
+    action: str = Field(min_length=1, max_length=100)
+    prompt: str = Field(min_length=1, max_length=2000)
+    speed: str = "normal"
+    direction: str = "any"
+    shot_type: str = "full body"
+    camera: str = "static"
+    seed: int = 10001
+    tags: list[str] = Field(default_factory=list)
+
+
+class AssetJobRead(ORMModel):
+    id: str
+    job_type: AssetJobType
+    project_id: str | None
+    character_id: str | None
+    status: JobStatus
+    worker_name: str | None
+    comfy_prompt_id: str | None
+    celery_task_id: str | None
+    request_json: dict
+    output_metadata: dict
+    error_message: str | None
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None

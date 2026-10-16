@@ -3,12 +3,25 @@ from __future__ import annotations
 import asyncio
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from ..config import get_settings
+from ..database import get_db
+from ..models import AssetJob, AssetJobType, JobStatus
 from ..services.comfyui import ComfyUIClient
 from ..services.diagnostics import run_diagnostics, tail
+from ..services.model_catalog import MODEL_CATALOG, catalog_status
+from ..tasks import download_model_job
 
 
 router = APIRouter(prefix="/system", tags=["system"])
@@ -22,6 +35,46 @@ def health():
 @router.get("/diagnostics")
 async def diagnostics(include_hashes: bool = False):
     return await run_diagnostics(include_hashes=include_hashes)
+
+
+@router.get("/models")
+def models():
+    return catalog_status()
+
+
+@router.post("/models/{model_key}/download", status_code=202)
+def download_model(model_key: str, db: Session = Depends(get_db)):
+    if model_key not in MODEL_CATALOG:
+        raise HTTPException(404, "模型不在允许下载的目录中")
+    status = next(item for item in catalog_status() if item["key"] == model_key)
+    if status["exists"]:
+        return {"status": "already_exists", "path": status["path"]}
+    existing_jobs = db.scalars(
+        select(AssetJob)
+        .where(AssetJob.job_type == AssetJobType.model_download)
+        .where(AssetJob.status.in_([JobStatus.queued, JobStatus.running]))
+    ).all()
+    existing = next(
+        (
+            job
+            for job in existing_jobs
+            if job.request_json.get("model_key") == model_key
+        ),
+        None,
+    )
+    if existing:
+        return {"status": existing.status.value, "job_id": existing.id}
+    job = AssetJob(
+        job_type=AssetJobType.model_download,
+        status=JobStatus.queued,
+        request_json={"model_key": model_key},
+    )
+    db.add(job)
+    db.commit()
+    task = download_model_job.delay(job.id)
+    job.celery_task_id = task.id
+    db.commit()
+    return {"status": "queued", "job_id": job.id}
 
 
 @router.get("/logs")

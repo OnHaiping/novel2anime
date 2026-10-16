@@ -1,0 +1,13 @@
+{
+  "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "meinamix_meinaV11.safetensors"}},
+  "2": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": "masterpiece, best quality, anime animation, full body"}},
+  "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": "worst quality, low quality, bad anatomy, cropped body, text, watermark, camera movement"}},
+  "4": {"class_type": "ADE_LoadAnimateDiffModel", "inputs": {"model_name": "mm_sd_v15_v2.ckpt"}},
+  "5": {"class_type": "ADE_ApplyAnimateDiffModelSimple", "inputs": {"motion_model": ["4", 0]}},
+  "6": {"class_type": "ADE_StandardStaticContextOptions", "inputs": {"context_length": 16, "context_overlap": 4, "fuse_method": "pyramid", "use_on_equal_length": true, "start_percent": 0.0, "guarantee_steps": 1}},
+  "7": {"class_type": "ADE_UseEvolvedSampling", "inputs": {"model": ["1", 0], "beta_schedule": "autoselect", "m_models": ["5", 0], "context_options": ["6", 0]}},
+  "8": {"class_type": "EmptyLatentImage", "inputs": {"width": 512, "height": 512, "batch_size": 16}},
+  "9": {"class_type": "KSampler", "inputs": {"model": ["7", 0], "positive": ["2", 0], "negative": ["3", 0], "latent_image": ["8", 0], "seed": 10001, "steps": 20, "cfg": 7.0, "sampler_name": "dpmpp_2m", "scheduler": "karras", "denoise": 1.0}},
+  "10": {"class_type": "VAEDecode", "inputs": {"samples": ["9", 0], "vae": ["1", 2]}},
+  "11": {"class_type": "VHS_VideoCombine", "inputs": {"images": ["10", 0], "frame_rate": 8, "loop_count": 0, "filename_prefix": "novel2anime/motion_drafts/motion", "format": "video/h264-mp4", "pix_fmt": "yuv420p", "crf": 19, "save_metadata": true, "trim_to_audio": false, "pingpong": false, "save_output": true}}
+}

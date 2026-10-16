@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import motions, projects, renders, system
+from .api import assets, motions, projects, renders, system
 from .config import get_settings
 from .database import Base, engine
 
@@ -31,6 +31,7 @@ app.include_router(projects.router, prefix="/api")
 app.include_router(motions.router, prefix="/api")
 app.include_router(renders.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
+app.include_router(assets.router, prefix="/api")
 
 
 @app.get("/")

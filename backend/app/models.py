@@ -62,6 +62,12 @@ class JobStatus(str, enum.Enum):
     cancelled = "cancelled"
 
 
+class AssetJobType(str, enum.Enum):
+    portrait = "portrait"
+    motion = "motion"
+    model_download = "model_download"
+
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -86,6 +92,9 @@ class Project(Base):
     )
 
     characters: Mapped[list[Character]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    selections: Mapped[list[NovelSelection]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
     scenes: Mapped[list[Scene]] = relationship(
@@ -113,6 +122,29 @@ class Character(Base):
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
 
     project: Mapped[Project] = relationship(back_populates="characters")
+
+
+class NovelSelection(Base):
+    __tablename__ = "novel_selections"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    source_text: Mapped[str] = mapped_column(Text)
+    char_start: Mapped[int] = mapped_column(Integer, default=0)
+    char_end: Mapped[int] = mapped_column(Integer, default=0)
+    selected: Mapped[bool] = mapped_column(Boolean, default=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    process_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    project: Mapped[Project] = relationship(back_populates="selections")
 
 
 class Scene(Base):
@@ -236,3 +268,34 @@ class RenderJob(Base):
     )
 
     shot: Mapped[Shot] = relationship(back_populates="jobs")
+
+
+class AssetJob(Base):
+    __tablename__ = "asset_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    job_type: Mapped[AssetJobType] = mapped_column(Enum(AssetJobType), index=True)
+    project_id: Mapped[str | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    character_id: Mapped[str | None] = mapped_column(
+        ForeignKey("characters.id", ondelete="CASCADE"), nullable=True
+    )
+    status: Mapped[JobStatus] = mapped_column(
+        Enum(JobStatus), default=JobStatus.queued, index=True
+    )
+    worker_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    comfy_prompt_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    celery_task_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    request_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    output_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

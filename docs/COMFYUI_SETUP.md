@@ -1,6 +1,6 @@
 # ComfyUI 节点与模型复现清单
 
-本文档对应仓库自带的 02/03/04 三套 API 工作流。执行命令前，先确认 `/work/comfyui/main` 是实际 ComfyUI 根目录，Conda 环境名是 `comfyui`。
+本文档对应仓库自带的 01～05 API 工作流。执行命令前，先确认 `/work/comfyui/main` 是实际 ComfyUI 根目录，Conda 环境名是 `comfyui`。
 
 如果 Conda 只在交互式 shell 中可用，脚本会自动检查常见的 Miniconda、Anaconda 和 `/opt/conda` 路径。非标准安装位置可显式指定：
 
@@ -33,6 +33,8 @@ chmod +x scripts/*.sh
 ./scripts/download-open-models.sh
 ```
 
+也可以启动系统后进入 Web 的“模型下载”页面逐项下载。下载任务在 Celery Worker 内调用 `curl --fail --location --retry 3 --continue-at -`，临时写入 `.part` 文件，成功后再原子改名；任意 URL 和任意目标路径都不能从前端提交，只能使用后端白名单。
+
 脚本会断点续传并跳过已有文件：
 
 | 模型 | 来源 | 目标位置 |
@@ -55,7 +57,7 @@ chmod +x scripts/*.sh
 MeinaMix 的下载和再分发许可应在模型发布页自行确认，因此自动脚本不下载它。若你的文件名不同，有两种做法：
 
 1. 将文件改名为 `meinamix_meinaV11.safetensors`；
-2. 修改三个 `workflows/api/*.json` 中 `CheckpointLoaderSimple.inputs.ckpt_name`。
+2. 修改使用该 Checkpoint 的 `workflows/api/*.json` 中 `CheckpointLoaderSimple.inputs.ckpt_name`。
 
 不要把模型文件提交进 Git。
 
