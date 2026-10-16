@@ -45,6 +45,12 @@ services:
       - /work/comfyui/main:/comfyui
     ports:
       - "${BACKEND_PORT:-3301}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/system/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,7 +86,8 @@ services:
     ports:
       - "${FRONTEND_PORT:-3300}:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:

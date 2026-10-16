@@ -126,6 +126,16 @@ docker compose up -d
 docker compose logs -f --tail=200
 ```
 
+如果 Web 显示 `502 Bad Gateway`，它表示前端 Nginx 无法连接后端，不表示 ComfyUI 模型缺失。先执行：
+
+```bash
+docker compose ps
+curl -i http://127.0.0.1:3301/api/system/health
+docker compose logs --tail=200 backend
+```
+
+后端健康但 Web 仍为 502 时执行 `docker compose restart frontend`。当前 Compose 已为 backend 增加健康检查，前端也会动态重新解析被重建后的 backend 容器地址。
+
 访问：
 
 - Web：<http://服务器地址:3300>
