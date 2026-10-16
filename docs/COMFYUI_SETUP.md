@@ -2,6 +2,12 @@
 
 本文档对应仓库自带的 02/03/04 三套 API 工作流。执行命令前，先确认 `/work/comfyui/main` 是实际 ComfyUI 根目录，Conda 环境名是 `comfyui`。
 
+如果 Conda 只在交互式 shell 中可用，脚本会自动检查常见的 Miniconda、Anaconda 和 `/opt/conda` 路径。非标准安装位置可显式指定：
+
+```bash
+export COMFYUI_CONDA_BIN="$(which conda)"
+```
+
 ## 1. 自定义节点
 
 一键安装缺失节点：

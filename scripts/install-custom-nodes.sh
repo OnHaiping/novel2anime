@@ -5,6 +5,23 @@ COMFY_ROOT="${COMFYUI_ROOT:-/work/comfyui/main}"
 CUSTOM_ROOT="$COMFY_ROOT/custom_nodes"
 mkdir -p "$CUSTOM_ROOT"
 
+CONDA_BIN="${COMFYUI_CONDA_BIN:-$(type -P conda 2>/dev/null || true)}"
+for candidate in \
+  "$CONDA_BIN" \
+  "${CONDA_EXE:-}" \
+  "$HOME/miniconda3/bin/conda" \
+  "$HOME/anaconda3/bin/conda" \
+  "/opt/conda/bin/conda"; do
+  if [[ -n "$candidate" && -x "$candidate" ]]; then
+    CONDA_BIN="$candidate"
+    break
+  fi
+done
+if [[ -z "$CONDA_BIN" || ! -x "$CONDA_BIN" ]]; then
+  echo "找不到 conda；请设置 COMFYUI_CONDA_BIN=/conda/绝对路径/bin/conda" >&2
+  exit 1
+fi
+
 install_repo() {
   local name="$1"
   local url="$2"
@@ -19,7 +36,7 @@ install_repo() {
   fi
   git clone --depth 1 "$url" "$target"
   if [[ -f "$target/requirements.txt" ]]; then
-    conda run -n comfyui python -m pip install -r "$target/requirements.txt"
+    "$CONDA_BIN" run -n comfyui python -m pip install -r "$target/requirements.txt"
   fi
 }
 
