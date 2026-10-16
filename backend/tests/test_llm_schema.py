@@ -63,8 +63,7 @@ def test_llm_parser_accepts_json_code_fence():
 
 
 def test_prompt_generation_uses_edited_plan(monkeypatch):
-    client = LLMClient()
-    monkeypatch.setattr(client.settings, "llm_model", "test-model")
+    client = LLMClient("test-model")
     captured_prompts: list[str] = []
 
     async def fake_request(user_prompt: str, *, system_prompt: str) -> str:

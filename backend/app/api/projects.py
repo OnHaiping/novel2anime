@@ -17,6 +17,7 @@ from ..schemas import (
     CharacterCreate,
     CharacterPatch,
     CharacterRead,
+    LLMModelSelection,
     NovelContentRead,
     NovelSelectionCreate,
     NovelSelectionPatch,
@@ -80,6 +81,19 @@ def _selected_records(
     return records
 
 
+def _project_llm_model(project: Project, requested: str | None = None) -> str:
+    return (
+        (requested or "").strip()
+        or str((project.settings or {}).get("llm_model", "")).strip()
+        or get_settings().llm_model.strip()
+    )
+
+
+def _save_project_llm_model(project: Project, model: str, db: Session) -> None:
+    project.settings = {**(project.settings or {}), "llm_model": model}
+    db.commit()
+
+
 @router.get("", response_model=list[ProjectRead])
 def list_projects(db: Session = Depends(get_db)):
     return db.scalars(select(Project).order_by(Project.created_at.desc())).all()
@@ -99,6 +113,21 @@ def get_project(project_id: str, db: Session = Depends(get_db)):
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(404, "项目不存在")
+    return project
+
+
+@router.put("/{project_id}/llm-model", response_model=ProjectRead)
+def select_project_llm_model(
+    project_id: str, payload: LLMModelSelection, db: Session = Depends(get_db)
+):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "项目不存在")
+    model = payload.model.strip()
+    if not model:
+        raise HTTPException(400, "模型 ID 不能为空")
+    _save_project_llm_model(project, model, db)
+    db.refresh(project)
     return project
 
 
@@ -159,6 +188,9 @@ async def plan_project(
         raise HTTPException(400, "请先上传小说")
     selections = _selected_records(db, project_id, payload.selection_ids)
     selection_input = [(item.title, item.source_text) for item in selections]
+    llm_model = _project_llm_model(project, payload.llm_model)
+    if payload.use_llm and llm_model:
+        _save_project_llm_model(project, llm_model, db)
     try:
         characters, scenes, shots = await create_plan(
             db,
@@ -168,6 +200,7 @@ async def plan_project(
             payload.target_shot_seconds,
             selection_input,
             payload.append_to_timeline,
+            llm_model,
         )
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -193,9 +226,12 @@ async def generate_plan_draft(
         raise HTTPException(404, "项目不存在")
     records = _selected_records(db, project_id, payload.selection_ids)
     selection_input = [(item.title, item.source_text) for item in records]
+    llm_model = _project_llm_model(project, payload.llm_model)
+    if payload.use_llm and llm_model:
+        _save_project_llm_model(project, llm_model, db)
     try:
         draft = await generate_plan(
-            project, payload.use_llm, payload.max_shots, selection_input
+            project, payload.use_llm, payload.max_shots, selection_input, llm_model
         )
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -247,7 +283,8 @@ async def generate_draft_prompts(project_id: str, db: Session = Depends(get_db))
         raise HTTPException(404, "项目不存在")
     draft, _ = _load_draft(project_id)
     try:
-        enhanced = await LLMClient().generate_prompts(draft)
+        project = db.get(Project, project_id)
+        enhanced = await LLMClient(_project_llm_model(project)).generate_prompts(draft)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:

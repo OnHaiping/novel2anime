@@ -207,6 +207,7 @@ class RenderJobRead(ORMModel):
 
 class PlanRequest(BaseModel):
     use_llm: bool = True
+    llm_model: str | None = Field(default=None, min_length=1, max_length=300)
     append_to_timeline: bool = False
     target_shot_seconds: float = Field(default=2.0, ge=1.0, le=6.0)
     max_shots: int = Field(default=30, ge=1, le=300)
@@ -215,6 +216,10 @@ class PlanRequest(BaseModel):
 
 class PlanDraftUpdate(BaseModel):
     draft: dict[str, Any]
+
+
+class LLMModelSelection(BaseModel):
+    model: str = Field(min_length=1, max_length=300)
 
 
 class PlanApplyRequest(BaseModel):

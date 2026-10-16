@@ -40,6 +40,7 @@ def health():
             "shot_output_preview",
             "editable_plan_json",
             "llm_prompt_refinement",
+            "project_llm_model_selection",
         ],
     }
 
@@ -52,6 +53,40 @@ async def diagnostics(include_hashes: bool = False):
 @router.get("/models")
 def models():
     return catalog_status()
+
+
+@router.get("/llm/models")
+async def llm_models():
+    settings = get_settings()
+    headers = {}
+    if settings.llm_api_key:
+        headers["Authorization"] = f"Bearer {settings.llm_api_key}"
+    try:
+        async with httpx.AsyncClient(timeout=min(settings.llm_timeout, 30)) as client:
+            response = await client.get(
+                f"{settings.llm_base_url.rstrip('/')}/models", headers=headers
+            )
+            response.raise_for_status()
+        data = response.json().get("data", [])
+        discovered = sorted(
+            {
+                str(item.get("id", "")).strip()
+                for item in data
+                if isinstance(item, dict) and str(item.get("id", "")).strip()
+            }
+        )
+    except Exception as exc:
+        raise HTTPException(
+            502,
+            f"无法从大模型服务读取模型列表：{exc}；仍可在项目中手动输入模型 ID",
+        ) from exc
+    if settings.llm_model and settings.llm_model not in discovered:
+        discovered.insert(0, settings.llm_model)
+    return {
+        "base_url": settings.llm_base_url,
+        "default_model": settings.llm_model or None,
+        "models": discovered,
+    }
 
 
 @router.post("/models/{model_key}/download", status_code=202)

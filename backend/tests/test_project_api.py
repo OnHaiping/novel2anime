@@ -25,6 +25,12 @@ def test_manual_text_selection_and_append_timeline(tmp_path, monkeypatch):
     client = TestClient(app)
     try:
         project = client.post("/api/projects", json={"name": "长篇测试"}).json()
+        selected_model = client.put(
+            f"/api/projects/{project['id']}/llm-model",
+            json={"model": "qwen-test:latest"},
+        )
+        assert selected_model.status_code == 200
+        assert selected_model.json()["settings"]["llm_model"] == "qwen-test:latest"
         novel_text = "第一章 雨夜\n她走进站台。\n\n第二章 清晨\n列车到站。"
         response = client.post(
             f"/api/projects/{project['id']}/novel",

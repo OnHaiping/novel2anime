@@ -63,8 +63,9 @@ async def create_plan(
     target_shot_seconds: float = 2.0,
     selections: list[tuple[str, str]] | None = None,
     append_to_timeline: bool = False,
+    llm_model: str | None = None,
 ) -> tuple[int, int, int]:
-    plan = await generate_plan(project, use_llm, max_shots, selections)
+    plan = await generate_plan(project, use_llm, max_shots, selections, llm_model)
     return apply_plan(
         db,
         project,
@@ -80,13 +81,14 @@ async def generate_plan(
     use_llm: bool,
     max_shots: int,
     selections: list[tuple[str, str]] | None = None,
+    llm_model: str | None = None,
 ) -> dict[str, Any]:
-    client = LLMClient()
+    client = LLMClient(llm_model)
     selected = selections or []
     if use_llm:
         if not client.configured:
             raise RuntimeError(
-                "已选择使用大模型，但 LLM_MODEL 未配置；系统不会静默降级为按句拆分"
+                "已选择使用大模型，但尚未选择模型；请先刷新模型列表并选择模型"
             )
         plan = {"characters": [], "scenes": []}
         known: dict[str, dict[str, Any]] = {

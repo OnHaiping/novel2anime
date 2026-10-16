@@ -88,12 +88,13 @@ PROMPT_SYSTEM = """你是 Stable Diffusion/AnimateDiff 的日本动画提示词�
 
 
 class LLMClient:
-    def __init__(self) -> None:
+    def __init__(self, model: str | None = None) -> None:
         self.settings = get_settings()
+        self.model = (model or self.settings.llm_model).strip()
 
     @property
     def configured(self) -> bool:
-        return bool(self.settings.llm_model)
+        return bool(self.model)
 
     async def plan_chunk(
         self,
@@ -103,7 +104,7 @@ class LLMClient:
         known_characters: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if not self.configured:
-            raise RuntimeError("LLM_MODEL 未配置")
+            raise RuntimeError("尚未选择大模型")
         schema = PlannedChunk.model_json_schema()
         context = json.dumps(known_characters or [], ensure_ascii=False)
         user_prompt = (
@@ -133,7 +134,7 @@ class LLMClient:
 
     async def generate_prompts(self, plan: dict[str, Any]) -> dict[str, Any]:
         if not self.configured:
-            raise RuntimeError("LLM_MODEL 未配置，无法使用大模型生成提示词")
+            raise RuntimeError("尚未选择大模型，无法生成提示词")
         validated = PlannedChunk.model_validate(plan).model_dump()
         schema = PromptBatch.model_json_schema()
         for scene_index, scene in enumerate(validated["scenes"]):
@@ -196,7 +197,7 @@ class LLMClient:
         if self.settings.llm_api_key:
             headers["Authorization"] = f"Bearer {self.settings.llm_api_key}"
         payload = {
-            "model": self.settings.llm_model,
+            "model": self.model,
             "temperature": 0.15,
             "response_format": {"type": "json_object"},
             "messages": [
