@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import __version__
 from .api import assets, motions, projects, renders, system
 from .config import get_settings
 from .database import Base, engine
@@ -19,7 +20,7 @@ async def lifespan(_: FastAPI):
 
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.app_origin, "http://localhost:3300"],

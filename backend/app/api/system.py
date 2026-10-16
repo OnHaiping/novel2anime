@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .. import __version__
 from ..config import get_settings
 from ..database import get_db
 from ..models import AssetJob, AssetJobType, JobStatus
@@ -29,7 +30,16 @@ router = APIRouter(prefix="/system", tags=["system"])
 
 @router.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "version": __version__,
+        "capabilities": [
+            "manual_novel_selections",
+            "asset_generation",
+            "model_downloader",
+            "shot_output_preview",
+        ],
+    }
 
 
 @router.get("/diagnostics")
